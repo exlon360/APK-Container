@@ -92,6 +92,7 @@ struct ContentView: View {
 
             if started && runner.isRunning {
                 GuestScreenView(showLogs: $showLogs,
+                                isPresented: appSurfaceVisible,
                                 chromeHidden: false,
                                 onBack: endAppPresentation)
                     .opacity(appSurfaceVisible ? 1 : 0)
@@ -369,6 +370,7 @@ struct ContentView: View {
 struct GuestScreenView: View {
     @ObservedObject private var runner = QemuRunner.shared
     @Binding var showLogs: Bool
+    var isPresented: Bool
     /// True while another tab is covering this one, so the guest's own controls
     /// are not drawn on top of a settings list.
     var chromeHidden = false
@@ -430,7 +432,9 @@ struct GuestScreenView: View {
 
             // Zero-sized: it exists only to hold first-responder status, which is
             // what both the on-screen keyboard and hardware key events depend on.
-            KeyCapture(active: $keyboard).frame(width: 0, height: 0)
+            KeyCapture(active: Binding(get: { isPresented && keyboard },
+                                       set: { keyboard = isPresented && $0 }))
+                .frame(width: 0, height: 0)
 
             // The controls, as one pill at the bottom.
             //
@@ -507,11 +511,17 @@ struct GuestScreenView: View {
         // On the screen rather than the button: the chrome can hide while the
         // document picker is up, and an importer attached to a view that goes
         // away goes away with it.
-        .statusBarHidden(true)
-        .huskHideSystemOverlays()
+        .statusBarHidden(isPresented)
+        .huskHideSystemOverlays(isPresented)
         .sheet(isPresented: $showControls) {
             ControlsSheet(keyboard: $keyboard)
                 .huskDetents([.height(300)])
+        }
+        .onChange(of: isPresented) { visible in
+            if !visible {
+                keyboard = false
+                showControls = false
+            }
         }
     }
 }

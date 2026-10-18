@@ -33,7 +33,7 @@ enum LibraryItem: Identifiable, Hashable {
     /// Games on the translation layer (a Flutter app is an app unless it calls itself a game), and what Android itself files as a game.
     var isGame: Bool {
         switch self {
-        case .game(let g): return (g.report?.nativeEngine != .flutter && g.report?.engine != "Flutter" && g.report?.webKind == nil) || g.isGameCategory
+        case .game(let g): return (g.report?.nativeEngine != nil && g.report?.nativeEngine != .java && g.report?.nativeEngine != .flutter && g.report?.engine != "Flutter" && g.report?.webKind == nil) || g.isGameCategory
         case .app(let p): return p.category == "Game"
         }
     }
@@ -543,6 +543,7 @@ struct LibraryItemActions: View {
             if AndroidHost.shared.isReady {
                 Divider()
                 Button(role: .destructive) { askRemove() } label: { Label("Uninstall", systemImage: "trash") }
+                    .disabled(AndroidHost.shared.busy != nil)
                     .accessibilityHint("Removes \(p.label) from Android")
             }
         }

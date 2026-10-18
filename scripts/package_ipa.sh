@@ -181,8 +181,8 @@ done
 [ $rc -eq 0 ] || { echo "==> bundle is not installable; refusing to package" >&2; exit 1; }
 
 echo "==> packaging"
-# staged next to the build (DD), not in the system temp folder: a full startup disk made codesign fail with "internal error"
-STAGE="$(mktemp -d "$DD/stage.XXXXXX")"
+# Stage outside document-provider folders, which can re-add Finder metadata during signing.
+STAGE="$(mktemp -d "${TMPDIR:-/tmp}/apk-container-package.XXXXXX")"
 trap 'rm -rf "$STAGE"' EXIT
 mkdir -p "$STAGE/Payload"
 cp -R "$APP" "$STAGE/Payload/"
@@ -209,6 +209,7 @@ sign() { codesign --force --sign - --timestamp=none "$@"; }
 find "$SAPP" -name "*.dylib" -not -path "*/Frameworks/*.framework/*" | while read -r f; do sign "$f"; done
 for fw in "$SAPP"/Frameworks/*.framework; do [ -d "$fw" ] && sign "$fw"; done
 for ex in "$SAPP"/PlugIns/*.appex; do [ -d "$ex" ] && sign "$ex"; done
+xattr -cr "$SAPP"
 sign --entitlements "$ENT" "$SAPP"
 echo "==> entitlements in the signed app:"
 EMBEDDED_ENTS=$(codesign -d --entitlements - "$SAPP" 2>&1 || true)

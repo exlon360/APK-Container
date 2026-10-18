@@ -1555,6 +1555,10 @@ final class AndroidHost: ObservableObject {
     }
 
     func uninstall(_ package: String) {
+        guard isReady, busy == nil, AndroidAppPresentation.validPackage(package) else {
+            say("Could not remove app", "Wait for the Android runtime's current operation to finish, then try again.", good: false)
+            return
+        }
         busy = "Removing \(package)…"
         Task.detached { [weak self] in
             var out = (try? GuestBridge.shared.shell("pm uninstall \(package)",
