@@ -30,7 +30,11 @@ fi
 # Keep Cargo downloads in this checkout's ignored build folder.
 export CARGO_HOME="${CARGO_HOME:-$ROOT/build/cargo-home}"
 export IPHONEOS_DEPLOYMENT_TARGET=15.5
-rustup run "${APK_CONTAINER_RUST_TOOLCHAIN:-stable}" cargo build \
+TOOLCHAIN="${APK_CONTAINER_RUST_TOOLCHAIN:-stable}"
+# Homebrew cargo can otherwise find Homebrew rustc instead of the toolchain with iOS std installed.
+export RUSTC="$(rustup which --toolchain "$TOOLCHAIN" rustc)"
+export RUSTDOC="$(rustup which --toolchain "$TOOLCHAIN" rustdoc)"
+"$(rustup which --toolchain "$TOOLCHAIN" cargo)" build \
     --manifest-path src/rppairing-ios/Cargo.toml --release --locked --target aarch64-apple-ios
 cp src/rppairing-ios/target/aarch64-apple-ios/release/libhusk_rppairing.a build/ios-arm64/lib/
 "$ROOT/scripts/prepare_java_tools.sh"
