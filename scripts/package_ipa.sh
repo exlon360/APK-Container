@@ -212,10 +212,10 @@ for ex in "$SAPP"/PlugIns/*.appex; do [ -d "$ex" ] && sign "$ex"; done
 xattr -cr "$SAPP"
 sign --entitlements "$ENT" "$SAPP"
 echo "==> entitlements in the signed app:"
-EMBEDDED_ENTS=$(codesign -d --entitlements - "$SAPP" 2>&1 || true)
+EMBEDDED_ENTS=$(codesign -d --entitlements - --xml "$SAPP" 2>&1 || true)
 REQUIRED_KEYS=(get-task-allow com.apple.developer.kernel.increased-memory-limit com.apple.developer.kernel.extended-virtual-addressing)
 [ "$TROLLSTORE" != true ] && REQUIRED_KEYS+=(dynamic-codesigning)
-codesign -d --entitlements - "$SAPP" > "$STAGE/embedded-entitlements.plist" 2>/dev/null
+codesign -d --entitlements - --xml "$SAPP" > "$STAGE/embedded-entitlements.plist" 2>/dev/null
 for key in "${REQUIRED_KEYS[@]}"; do
     value="$(/usr/libexec/PlistBuddy -c "Print :$key" "$STAGE/embedded-entitlements.plist" 2>/dev/null || true)"
     if [ "$value" != true ]; then

@@ -35,7 +35,7 @@ with zipfile.ZipFile(package) as archive:
     with tempfile.TemporaryDirectory(prefix="apk-container-signature-") as temp:
         executable = Path(temp) / info["CFBundleExecutable"]
         executable.write_bytes(archive.read(prefix + info["CFBundleExecutable"]))
-        result = subprocess.run(["codesign", "-d", "--entitlements", "-", str(executable)], capture_output=True, check=True)
+        result = subprocess.run(["codesign", "-d", "--entitlements", "-", "--xml", str(executable)], capture_output=True, check=True)
         entitlements = plistlib.loads(result.stdout)
         keys = ["get-task-allow", "com.apple.developer.kernel.increased-memory-limit",
                 "com.apple.developer.kernel.extended-virtual-addressing"]
