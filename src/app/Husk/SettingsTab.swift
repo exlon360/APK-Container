@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import SwiftUI
 
-/// Settings, as the iOS Settings app lays them out: a card for the app up top, then groups of rows that each
-/// push a page of their own. What belongs to the app, what belongs to the emulator, and what the thing is.
+/// Native grouped settings, with the app runtime kept separate from the app library.
 struct SettingsTab: View {
     @AppStorage(AppWindows.defaultKey) private var multitask = false
     @AppStorage(CompatibilityStore.askKey) private var askCompat = true
@@ -15,85 +14,47 @@ struct SettingsTab: View {
                 }
 
                 Section {
-                    row(JITSettings(), "bolt.fill", .yellow, "JIT & Sideload", "StikJIT is built in — the recommended way")
-                } header: {
-                    Text("JIT")
+                    row(JITSettings(), "bolt.fill", .yellow, "JIT & Sideloading", "Enable JIT and manage your connection")
                 } footer: {
-                    Text("Android and Translation Layer games need JIT. StikJIT, built into Husk, turns it on without a computer.")
+                    Text("JIT and extended-memory support remain available for Android apps. StikJIT is built in.")
+                }
+
+                Section("Apps") {
+                    row(DisplayDefaultsSettingsView(), "rectangle.expand.vertical", .blue, "Display & Resolution", "Device-sized display, quality and per-app overrides")
+                    row(LibrarySettings(), "square.stack.3d.up.fill", .indigo, "App Library", "Installed apps and icons")
+                    row(DiscoverView(), "sparkle.magnifyingglass", .mint, "Find Apps", "Browse APK repositories")
+                    row(FontSettings(), "textformat", .orange, "Fonts", "Chinese, Japanese and Korean text")
+                    Toggle(isOn: $multitask) {
+                        Label("Open Apps in Windows", systemImage: "macwindow.on.rectangle")
+                    }
                 }
 
                 Section("General") {
-                    row(DiscoverView(), "sparkle.magnifyingglass", .mint, "Discover", "Find apps in F-Droid and other repositories")
-                    row(LibrarySettings(), "square.grid.2x2.fill", .blue, "Library", "Your apps and their icons")
-                    row(PerformanceSettings(), "speedometer", .orange, "Performance", "Renderer, sound")
-                    row(AppearanceSettings(), "paintbrush.fill", .pink, "Appearance", "Light or dark, accent colour, app icon")
-                    row(FontSettings(), "textformat", .indigo, "Fonts", "Chinese, Japanese and Korean text")
+                    row(AppearanceSettings(), "paintbrush.fill", .pink, "Appearance", "Light or dark, accent colour and app icon")
                     row(FAQTab(), "questionmark.circle.fill", .teal, "Help", "Answers to common problems")
                 }
 
                 Section {
-                    Toggle(isOn: $multitask) {
-                        Label {
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text("Open Apps in Windows")
-                                Text("Use Husk while an app runs").font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                            }
-                        } icon: {
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .fill(Color.purple.huskGradient)
-                                .frame(width: 30, height: 30)
-                                .overlay {
-                                    Image(systemName: "macwindow.on.rectangle")
-                                        .font(.system(size: 14, weight: .medium))
-                                        .foregroundStyle(.white)
-                                }
-                        }
-                    }
+                    row(AndroidRuntimeSettings(), "shippingbox.fill", .green, "Runtime Setup", "Download and manage the Android runtime")
+                    row(PerformanceSettings(), "speedometer", .orange, "Performance", "GPU renderer and sound")
+                    row(InputSettings(), "hand.tap.fill", .indigo, "Display & Input", "Runtime resolution, orientation and touch")
+                    row(NetworkSettings(), "globe", .green, "Network", "Internet and saved sessions")
+                    row(SavedMachineSettings(), "externaldrive.fill", .teal, "Saved Runtime", "Snapshots and automatic saving")
                 } header: {
-                    Text("Multitasking")
+                    Text("Compatibility Runtime")
                 } footer: {
-                    Text("Apps and games open in a window you can move, resize and minimise to a dock, like LiveContainer's multitasking. "
-                       + "Each app can override this in its own settings.")
+                    Text("Apps that need a full Android environment can use the compatibility runtime. It starts when an app needs it; your apps stay in the Apps tab.")
                 }
 
                 Section {
-                    Toggle(isOn: $askCompat) {
-                        Label {
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text("Ask How Games Ran")
-                                Text("After playing, once per game per update").font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                            }
-                        } icon: {
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .fill(Color.green.huskGradient)
-                                .frame(width: 30, height: 30)
-                                .overlay {
-                                    Image(systemName: "list.bullet.clipboard")
-                                        .font(.system(size: 14, weight: .medium))
-                                        .foregroundStyle(.white)
-                                }
-                        }
-                    }
+                    Toggle("Ask How Apps Ran", isOn: $askCompat)
                     Link(destination: CompatibilityStore.site) {
                         Label("Compatibility List", systemImage: "safari")
                     }
                 } header: {
                     Text("Compatibility")
                 } footer: {
-                    Text("Game pages and the Store show how each app runs for everyone, from antiweb.lol. Your reports go there "
-                       + "with your device, iOS version, Husk build and JIT method.")
-                }
-
-                Section {
-                    row(AndroidSystemPage(), "apps.iphone", AndroidMark.green, "Android", "Experimental: full Android in an emulator")
-                    row(InputSettings(), "hand.tap.fill", .indigo, "Input", "Screen, touch, keyboard")
-                    row(NetworkSettings(), "globe", .green, "Network", "Internet and saved sessions")
-                    row(SavedMachineSettings(), "externaldrive.fill", .teal, "Saved Machine", "Snapshots and automatic saving")
-                } header: {
-                    Text("Android Emulator")
-                } footer: {
-                    Text("Full Android runs in an emulator, for the apps the Translation Layer can't run yet. It is experimental: slow, "
-                       + "and it can freeze or crash.")
+                    Text("Optional reports include your device, iOS version, build and JIT method, and are sent to the upstream compatibility service at antiweb.lol after your confirmation.")
                 }
             }
             .listStyle(.insetGrouped)
@@ -103,12 +64,15 @@ struct SettingsTab: View {
 
     private var appCard: some View {
         HStack(spacing: 14) {
-            HuskMark(size: 56)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Husk").font(.title3.weight(.semibold))
-                Text("Version \(Bundle.main.version) · \(Bundle.main.commit)")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+            Image(systemName: "square.stack.3d.up.fill")
+                .font(.system(size: 26, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 56, height: 56)
+                .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+            VStack(alignment: .leading, spacing: 3) {
+                Text("APK Container").font(.title3.weight(.semibold))
+                Text("Version \(Bundle.main.version)")
+                    .font(.subheadline).foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 6)
@@ -118,13 +82,13 @@ struct SettingsTab: View {
                               _ title: String, _ subtitle: String) -> some View {
         NavigationLink { destination } label: {
             Label {
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: 3) {
                     Text(title)
-                    Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Text(subtitle).font(.caption).foregroundStyle(.secondary)
                 }
             } icon: {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(tint.huskGradient)
+                    .fill(tint)
                     .frame(width: 30, height: 30)
                     .overlay {
                         Image(systemName: icon)
@@ -185,7 +149,7 @@ struct LibrarySettings: View {
                 .disabled(working || !host.isReady)
             } footer: {
                 Text("Names and icons come from Android's own launcher, which keeps "
-                   + "the version it draws. Re-fetching throws away Husk's copies and "
+                   + "the version it draws. Re-fetching throws away APK Container's copies and "
                    + "asks again.")
             }
         }
@@ -294,8 +258,7 @@ struct PerformanceSettings: View {
                 Text("Renderer")
             } footer: {
                 Text(gpuMode
-                     ? "Android draws on the real GPU through Metal — about four times "
-                     + "the frame rate. This is the default."
+                     ? "Android uses the GPU through Metal. This is the default renderer."
                      : "Every pixel is drawn by the emulated CPU. Much slower, and only "
                      + "worth choosing if the GPU misbehaves.")
             }
@@ -342,19 +305,32 @@ struct InputSettings: View {
     @State private var landscapeGuest =
         UserDefaults.standard.bool(forKey: "husk.landscapeGuest")
     @State private var customRes = UserDefaults.standard.bool(forKey: "husk.customRes")
-    @State private var widthText = InputSettings.stored("husk.resWidth", 720)
-    @State private var heightText = InputSettings.stored("husk.resHeight", 1280)
+    @State private var widthText = InputSettings.stored("husk.resWidth", InputSettings.deviceSize().w)
+    @State private var heightText = InputSettings.stored("husk.resHeight", InputSettings.deviceSize().h)
 
-    /// Sizes worth offering without typing. Deliberately short: these are the
-    /// shapes a phone guest is actually run at, not a catalogue of every panel
-    /// ever made.
-    private static let presets: [(name: String, w: Int, h: Int)] = [
-        ("Small — 360 × 800", 360, 800),
-        ("HD — 720 × 1280", 720, 1280),
-        ("Full HD — 1080 × 1920", 1080, 1920),
-        ("Landscape HD — 1280 × 720", 1280, 720),
-        ("Tablet — 1280 × 800", 1280, 800),
-    ]
+    /// The fallback Android runtime has a smaller pixel budget than the native app renderer.
+    private static func deviceSize(fraction: CGFloat = 1, landscape: Bool = QemuRunner.landscapeGuest) -> (w: Int, h: Int) {
+        let screen = UIScreen.main
+        let short = min(screen.bounds.width, screen.bounds.height), long = max(screen.bounds.width, screen.bounds.height)
+        guard let size = APKDisplayResolution.surface(width: Double(landscape ? long : short),
+                                                      height: Double(landscape ? short : long),
+                                                      nativeScale: Double(screen.nativeScale * fraction),
+                                                      preset: .custom, maximumEdge: 2560),
+              let valid = QemuRunner.validResolution(w: size.width, h: size.height) else { return (720, 1280) }
+        return valid
+    }
+
+    private var presets: [(name: String, w: Int, h: Int)] {
+        let native = Self.deviceSize(landscape: landscapeGuest)
+        let balanced = Self.deviceSize(fraction: 0.5, landscape: landscapeGuest)
+        return [
+            ("Device maximum — \(native.w) × \(native.h)", native.w, native.h),
+            ("Device 50% — \(balanced.w) × \(balanced.h)", balanced.w, balanced.h),
+            ("Phone — 720 × 1280", 720, 1280),
+            ("Landscape — 1280 × 720", 1280, 720),
+            ("iPad 4:3 — 1024 × 768", 1024, 768),
+        ]
+    }
 
     private static func stored(_ key: String, _ fallback: Int) -> String {
         let v = UserDefaults.standard.integer(forKey: key)
@@ -387,11 +363,9 @@ struct InputSettings: View {
                 Text(customRes
                      ? "A custom resolution sets the shape itself, so this does nothing "
                      + "while it is on. Type a wide size for landscape."
-                     : "Android cannot reshape a screen once it is running, so a "
-                     + "landscape game on a portrait screen gets letterboxed into a "
-                     + "band and looks tiny. Creating it landscape is the only way it "
-                     + "can fill it — portrait apps are letterboxed instead. Costs one "
-                     + "cold boot.")
+                     : "The fallback Android runtime keeps a fixed panel until its next cold boot. "
+                     + "The default preserves compatibility with the installed startup snapshot. "
+                     + "Use custom resolution for this iPhone or iPad's display proportions.")
             }
 
             Section {
@@ -408,13 +382,13 @@ struct InputSettings: View {
                     Picker("Preset", selection: Binding(
                         get: { presetIndex },
                         set: { i in
-                            guard i >= 0, i < Self.presets.count else { return }
-                            widthText = String(Self.presets[i].w)
-                            heightText = String(Self.presets[i].h)
+                            guard i >= 0, i < presets.count else { return }
+                            widthText = String(presets[i].w)
+                            heightText = String(presets[i].h)
                             store()
                         })) {
-                        ForEach(0..<Self.presets.count, id: \.self) { i in
-                            Text(Self.presets[i].name).tag(i)
+                        ForEach(0..<presets.count, id: \.self) { i in
+                            Text(presets[i].name).tag(i)
                         }
                         Text("Custom").tag(-1)
                     }
@@ -456,9 +430,9 @@ struct InputSettings: View {
                 Text("The panel is built when the machine starts, so a change costs "
                    + "one cold boot, and the next save replaces the machine saved at "
                    + "the old size — changing back costs another. Sizes are rounded "
-                   + "to a multiple of eight. Bigger is slower: every pixel is drawn "
-                   + "by an emulated phone. Android's density does not change with "
-                   + "the panel, so a larger one shows more rather than bigger.")
+                   + "to a multiple of eight. Device maximum uses this screen's native aspect ratio, capped at 2560 pixels per edge for the fallback runtime. "
+                   + "More pixels increase rendering and memory costs. Android's density does not change with the panel. "
+                   + "Native apps use their own Display & Resolution settings.")
             }
 
             Section {
@@ -471,7 +445,7 @@ struct InputSettings: View {
             }
         }
         .huskForm()
-        .navigationTitle("Input")
+        .navigationTitle("Runtime Display & Input")
     }
 
     /// The panel the guest actually has, which only means anything while there
@@ -484,12 +458,14 @@ struct InputSettings: View {
     /// Which preset the typed numbers are, if any.
     private var presetIndex: Int {
         guard let size = effective else { return -1 }
-        return Self.presets.firstIndex { $0.w == size.w && $0.h == size.h } ?? -1
+        return presets.firstIndex { $0.w == size.w && $0.h == size.h } ?? -1
     }
 
     private func store() {
-        UserDefaults.standard.set(Int(widthText) ?? 0, forKey: "husk.resWidth")
-        UserDefaults.standard.set(Int(heightText) ?? 0, forKey: "husk.resHeight")
+        // Keep the last valid resolution while either text field is being edited.
+        guard let size = effective else { return }
+        UserDefaults.standard.set(size.w, forKey: "husk.resWidth")
+        UserDefaults.standard.set(size.h, forKey: "husk.resHeight")
     }
 }
 
@@ -579,9 +555,9 @@ struct JITSettings: View {
             } footer: {
                 Text(jit.method == .automatic
                      ? jit.automaticDescription + " Built-in StikJIT needs iOS 26, LocalDevVPN, and a "
-                       + "pairing file, which Husk can make itself on iOS 27."
+                       + "pairing file, which APK Container can make itself on iOS 27."
                      : HuskBuiltInJIT.unavailableReason ?? "Built-in StikJIT needs LocalDevVPN and a pairing "
-                       + "file, which Husk can make itself on iOS 27.")
+                       + "file, which APK Container can make itself on iOS 27.")
             }
 
             Section {
@@ -598,7 +574,7 @@ struct JITSettings: View {
                                : JITBootstrap.prewarmed ? "answering" : "not answering",
                           mono: false)
                 if let route = husk_ios_jit_self_route() {
-                    DetailRow(label: "Made by Husk",
+                    DetailRow(label: "Made by APK Container",
                               value: String(cString: route) == "MAP_JIT" ? "MAP_JIT (TrollStore entitlement)" : "plain memory (debugged or jailbroken)",
                               mono: false)
                 }
@@ -631,19 +607,19 @@ struct JITSettings: View {
             } header: {
                 Text("JIT")
             } footer: {
-                Text("Husk needs memory it can write and then execute, which on iOS "
+                Text("APK Container needs memory it can write and then execute, which on iOS "
                    + "takes an attached debugger. There are two ways to get it: a "
                    + "debugger that services trap requests, or a MAP_JIT mapping, "
                    + "which the kernel allows any debugged process. Either one is "
                    + "enough — which is available depends on the device and the iOS "
-                   + "version, so Husk tests both rather than assuming.")
+                   + "version, so APK Container tests both rather than assuming.")
             }
 
             if JITBootstrap.isInstalledWithTrollStore {
                 Section {
                     Toggle("Turn On JIT with TrollStore at Launch", isOn: $trollStoreJIT)
                 } footer: {
-                    Text("Each time Husk opens without JIT, it asks TrollStore to turn it on. TrollStore's URL Scheme setting must be on.")
+                    Text("Each time APK Container opens without JIT, it asks TrollStore to turn it on. TrollStore's URL Scheme setting must be on.")
                 }
             }
 
@@ -652,25 +628,25 @@ struct JITSettings: View {
                     .disabled(!HuskBuiltInJIT.isAvailable)
             } footer: {
                 Text(HuskBuiltInJIT.isAvailable
-                     ? "Each time Husk opens without JIT, it asks the built-in StikJIT to turn it on, so games are ready "
+                     ? "Each time APK Container opens without JIT, it asks the built-in StikJIT to turn it on, so games are ready "
                        + "without a tap. Needs StikJIT set up once (paired) first."
                      : "Needs the built-in StikJIT, which is available on iOS 26 and later.")
             }
 
             Section {
-                Toggle("Start Android on launch", isOn: $autoStart)
+                Toggle("Prewarm compatibility runtime", isOn: $autoStart)
                     .onChange(of: autoStart) { v in
                         UserDefaults.standard.set(v, forKey: "husk.autoStart")
                     }
             } footer: {
-                Text("Boots the guest as soon as Husk opens, when JIT is available.")
+                Text("Starts the compatibility runtime in the background when APK Container opens and JIT is available.")
             }
 
             Section {
                 Toggle("Keep debugger attached", isOn: $keepAttached)
                     .onChange(of: keepAttached) { v in JITBootstrap.keepDebuggerAttached = v }
             } footer: {
-                Text("Off by default. Husk detaches StikDebug as soon as the "
+                Text("Off by default. APK Container detaches StikDebug as soon as the "
                    + "JIT region is held, because a debugger that iOS has suspended "
                    + "stops the whole app the next time it is needed. Turn this on "
                    + "only to collect StikDebug's own logs.")
@@ -722,7 +698,7 @@ struct SavedMachineSettings: View {
                 }
                 .disabled(runner.isSavingState)
             } footer: {
-                Text("Husk restores a saved machine instead of booting it, which takes "
+                Text("APK Container restores a saved machine instead of booting it, which takes "
                    + "seconds rather than minutes. The picture freezes while it writes. "
                    + "With this off, nothing saves by itself — including after an "
                    + "install.")
@@ -773,7 +749,7 @@ struct SavedMachineSettings: View {
             Section {
                 Toggle("Ask about Android updates", isOn: $askUpdates)
             } footer: {
-                Text("When a new Android image or snapshot is published, Husk asks once whether to download it. "
+                Text("When a new Android image or snapshot is published, APK Container asks once whether to download it. "
                    + "Never asked before Android has been downloaded.")
             }
         }
@@ -813,7 +789,6 @@ struct SavedMachineSettings: View {
 struct AppearanceSettings: View {
     @State private var appIcon = HuskAppIcon.current
     @AppStorage(Theme.Appearance.key) private var appearance = Theme.Appearance.system
-    @AppStorage(Holiday.key) private var holiday = true
     @ObservedObject private var theme = AppTheme.shared
     @Environment(\.colorScheme) private var scheme
     @State private var custom: Color = AppTheme.shared.accentColor
@@ -830,13 +805,12 @@ struct AppearanceSettings: View {
                 .onChange(of: appearance) { v in
                     HuskLog.log("ui", "appearance: \(v.rawValue)")
                 }
-                Toggle("Holiday Decorations", isOn: $holiday)
             } header: {
                 Text("Theme")
             } footer: {
                 Text("System follows the phone: light by day, dark by night. The guest's own "
                    + "screen stays dark either way — it is a picture of another phone. "
-                   + "Holiday decorations appear from December to early January.")
+                   + "Your selected appearance applies throughout APK Container.")
             }
 
             Section {
@@ -928,7 +902,7 @@ struct AboutSettings: View {
             Section {
                 VStack(spacing: 8) {
                     HuskMark(size: 84)
-                    Text("Husk").font(.title2.weight(.semibold))
+                    Text("APK Container").font(.title2.weight(.semibold))
                     Text("Version \(Bundle.main.version)")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
@@ -967,8 +941,8 @@ struct AboutSettings: View {
                     Label("Open Console", systemImage: "terminal")
                 }
             } footer: {
-                Text("Husk runs unmodified Android APKs in a real Android system on your iPhone. "
-                   + "The console shows Husk's live log, the guest's serial output and QEMU's own "
+                Text("APK Container runs Android APKs with a native translation layer and an optional Android compatibility runtime on iPhone and iPad. "
+                   + "The console shows APK Container's live log, the guest's serial output and QEMU's own "
                    + "output — the three files any problem here is diagnosed from.")
             }
         }

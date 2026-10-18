@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #define _DARWIN_C_SOURCE
 #include "husk-tl-unity-app.h"
-#include "husk-console-host.h"
 
 #include <dlfcn.h>
 #include <fcntl.h>
@@ -621,7 +620,7 @@ bool husk_native_wants_controller(void)
 const char *husk_native_loaded_apk(void)
 {
     if (atomic_load(&A.state) != HUSK_UNITY_IDLE) return A.apk;
-    return husk_console_loaded_game();   /* a console game holds the JIT region too */
+    return NULL;
 }
 
 int husk_unity_state(void)

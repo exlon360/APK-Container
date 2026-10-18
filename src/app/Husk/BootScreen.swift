@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import SwiftUI
 
-/// The screen Husk opens on when it is starting Android for you.
+/// The screen APK Container opens on when it is starting Android for you.
 ///
 /// Before this, "start on launch" dropped you into a library whose apps could
 /// not be opened yet, with a strip at the top explaining why — which is a UI
@@ -93,7 +93,7 @@ struct BootScreen: View {
                 // An escape hatch, but not an invitation: it turns up only once
                 // waiting has stopped being novel.
                 if now.timeIntervalSince(began) > 8 {
-                    Button("Use Husk while it starts", action: onSkip)
+                    Button("Use APK Container while it starts", action: onSkip)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(Theme.textDim)
                         .padding(.top, 14)

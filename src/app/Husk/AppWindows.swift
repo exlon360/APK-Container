@@ -167,8 +167,8 @@ private struct AppWindow: View {
             WebAppSurface(app: app)
         } else if let other = blockedBy {
             VStack(spacing: 6) {
-                Text("Another game is already loaded").font(.subheadline.weight(.semibold))
-                Text("\(other) was started in this session. Close Husk completely and open it again to run \(app.label).")
+                Text("Another app is already loaded").font(.subheadline.weight(.semibold))
+                Text("\(other) was started in this session. Close APK Container completely and open it again to run \(app.label).")
                     .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
             }
             .foregroundStyle(.white)
@@ -176,7 +176,8 @@ private struct AppWindow: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let apk = app.apks.first {
             TLWindowScreen(apk: apk, extraApks: Array(app.apks.dropFirst()), dataDir: app.nativeDataDir,
-                           engine: app.screenEngine, portrait: portrait, scale: settings.resolution.scale)
+                           engine: app.screenEngine, portrait: portrait, resolution: settings.resolution,
+                           maximumRenderEdge: settings.maximumRenderEdge)
                 .overlay {
                     if model.frames == 0 {
                         VStack(spacing: 10) {
@@ -323,11 +324,12 @@ struct TLWindowScreen: UIViewRepresentable {
     let dataDir: String
     let engine: TLNativeEngine
     let portrait: Bool
-    let scale: CGFloat
+    let resolution: TLAppSettings.Resolution
+    let maximumRenderEdge: Int
 
     func makeUIView(context: Context) -> TLWindowHost {
         TLWindowHost(game: TLUnityScreen.view(apk: apk, extraApks: extraApks, dataDir: dataDir, engine: engine,
-                                              portrait: portrait, scale: scale))
+                                              portrait: portrait, resolution: resolution, maximumRenderEdge: maximumRenderEdge))
     }
     func updateUIView(_ view: TLWindowHost, context: Context) { view.setNeedsLayout() }
 }
@@ -335,12 +337,12 @@ struct TLWindowScreen: UIViewRepresentable {
 final class TLWindowHost: UIView {
     let game: TLUnityUIView
 
-    init(game: TLUnityUIView) {
+    init(game: TLUnityUIView, windowed: Bool = true) {
         self.game = game
         super.init(frame: .zero)
         backgroundColor = .black
         clipsToBounds = true
-        game.windowed = true
+        game.windowed = windowed
         game.transform = .identity
         addSubview(game)
     }
@@ -364,5 +366,6 @@ final class TLWindowHost: UIView {
                 if self?.game.launchedSize != nil, self?.game.engine != .flutter { self?.setNeedsLayout() }
             }
         }
+        game.synchronizeWebHost()
     }
 }

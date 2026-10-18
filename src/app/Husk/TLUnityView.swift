@@ -45,6 +45,8 @@ final class TLUnityUIView: UIView, UIKeyInput {
     let engine: TLNativeEngine
     /// A portrait game is told its size when the screen is taller than wide, as a landscape one is when it is wider.
     private let portrait: Bool
+    private let resolution: TLAppSettings.Resolution
+    private let maximumRenderEdge: Int
     private(set) var launched = false
     /// The size, in points, the game was told it has as it started. Every engine but Flutter keeps it for good, so a window
     /// that is resized later scales the picture instead (TLWindowHost).
@@ -64,22 +66,24 @@ final class TLUnityUIView: UIView, UIKeyInput {
     /// Called when three fingers tap at once: the way back to the interface while it is hidden.
     var onThreeFingerTap: (() -> Void)?
 
-    init(apk: String, extraApks: [String] = [], dataDir: String, engine: TLNativeEngine, portrait: Bool = false, scale: CGFloat = 2) {
+    init(apk: String, extraApks: [String] = [], dataDir: String, engine: TLNativeEngine, portrait: Bool = false,
+         resolution: TLAppSettings.Resolution = .automatic, maximumRenderEdge: Int = APKDisplayResolution.defaultMaximumEdge) {
         self.apk = apk
         self.portrait = portrait
         self.dataDir = dataDir
         self.engine = engine
         self.extraApks = extraApks
+        self.resolution = resolution == .automatic ? APKDisplayResolution.defaultPreset : resolution
+        self.maximumRenderEdge = maximumRenderEdge
         super.init(frame: .zero)
         backgroundColor = .black
         isMultipleTouchEnabled = true
-        // Two pixels per point unless the game's settings say otherwise: sharp enough, and a third of the pixels a 3x phone would
-        // ask the game for -- a 3D game is limited by fill rate, and ANGLE's translation costs on top.
-        contentScaleFactor = scale
+        // The actual window determines density in layoutSubviews, including iPad and external displays.
+        contentScaleFactor = UIScreen.main.nativeScale
         if let metal = layer as? CAMetalLayer {
             metal.pixelFormat = .bgra8Unorm
             metal.framebufferOnly = true
-            metal.contentsScale = scale
+            metal.contentsScale = contentScaleFactor
             metal.isOpaque = true
         }
         let threeFingers = UITapGestureRecognizer(target: self, action: #selector(threeFingerTapped))
@@ -151,6 +155,25 @@ final class TLUnityUIView: UIView, UIKeyInput {
     /// A Java app's WebViews (WKWebViews) live in a view right under this one, where the app's window leaves a hole for them.
     /// Touches on a page go straight to it, so the back swipe and the three-finger tap are on that view too.
     private var webHost: UIView?
+    private var keyboardFrame: CGRect?
+    private var lastFlutterSize = CGSize.zero
+    private var lastFlutterScale: CGFloat = 0
+    private var lastFlutterInsets = UIEdgeInsets.zero
+
+    private var keyboardCoverage: CGFloat {
+        guard let window, let keyboardFrame else { return 0 }
+        return max(0, convert(bounds, to: window).maxY - window.convert(keyboardFrame, from: nil).minY)
+    }
+
+    /// The Java WebViews share the app's coordinate system even when a fixed surface is fitted into another window size.
+    func synchronizeWebHost() {
+        guard let webHost else { return }
+        webHost.transform = .identity
+        webHost.bounds = bounds
+        webHost.center = center
+        webHost.transform = transform
+    }
+
     private func attachWebHost(fresh: Bool) {
         guard let superview else { return }
         webHost?.removeFromSuperview()
@@ -167,12 +190,19 @@ final class TLUnityUIView: UIView, UIKeyInput {
         threeFingers.delaysTouchesEnded = false
         host.addGestureRecognizer(threeFingers)
         webHost = host
+        synchronizeWebHost()
         husk_java_web_attach(Unmanaged.passUnretained(self).toOpaque(), Unmanaged.passUnretained(host).toOpaque(), Float(contentScaleFactor), fresh ? 1 : 0)
     }
 
     override func willMove(toSuperview newSuperview: UIView?) {
         super.willMove(toSuperview: newSuperview)
         if newSuperview == nil { webHost?.removeFromSuperview() }
+    }
+
+    override func didMoveToSuperview() {
+        super.didMoveToSuperview()
+        // A fullscreen/window transition reparents the persistent render surface and its Java WebViews together.
+        if launched, engine == .java, superview != nil { attachWebHost(fresh: false) }
     }
 
     @objc private func edgeSwiped(_ g: UIScreenEdgePanGestureRecognizer) {
@@ -182,8 +212,8 @@ final class TLUnityUIView: UIView, UIKeyInput {
     private func keyboardMoved(_ note: Notification) {
         guard let window, let end = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
         let hiding = note.name == UIResponder.keyboardWillHideNotification
-        let mine = convert(bounds, to: window)
-        let covered = hiding ? 0 : max(0, mine.maxY - window.convert(end, from: nil).minY)
+        keyboardFrame = hiding ? nil : end
+        let covered = keyboardCoverage
         if engine == .java {
             let k = contentScaleFactor, inset = windowed ? UIEdgeInsets.zero : window.safeAreaInsets
             husk_java_set_insets(Int32(inset.left * k), Int32(inset.top * k), Int32(inset.right * k), Int32(inset.bottom * k), Int32((covered * k).rounded()))
@@ -210,8 +240,17 @@ final class TLUnityUIView: UIView, UIKeyInput {
     override func layoutSubviews() {
         super.layoutSubviews()
         stats.frame = CGRect(x: bounds.width - 148, y: bounds.height - 22, width: 142, height: 16)
-        if let webHost, webHost.frame != frame { webHost.frame = frame }
+        synchronizeWebHost()
         guard bounds.width > 0, bounds.height > 0 else { return }
+        guard let surface = APKDisplayResolution.surface(width: Double(bounds.width), height: Double(bounds.height),
+                                                          nativeScale: Double(window?.screen.nativeScale ?? UIScreen.main.nativeScale),
+                                                          preset: resolution, maximumEdge: maximumRenderEdge,
+                                                          defaultPreset: APKDisplayResolution.defaultPreset) else { return }
+        // Fixed-size engines keep their launch density; Flutter supports a resized surface and updated density.
+        if !launched || engine == .flutter {
+            contentScaleFactor = CGFloat(surface.scale)
+            (layer as? CAMetalLayer)?.contentsScale = contentScaleFactor
+        }
         let w = Int((bounds.width * contentScaleFactor).rounded())
         let h = Int((bounds.height * contentScaleFactor).rounded())
         // An Unreal game draws with MoltenVK, which sizes this layer itself to the swapchain it made; sizing it back here on every layout would leave the layer and the
@@ -219,7 +258,18 @@ final class TLUnityUIView: UIView, UIKeyInput {
         if !(engine == .ue4 && launched) { (layer as? CAMetalLayer)?.drawableSize = CGSize(width: w, height: h) }
         // Flutter lays itself out again at any size, as an Android view does when its window changes: a window being resized, the
         // screen turning.
-        if engine == .flutter, launched { husk_flutter_resize(Int32(w), Int32(h)) }
+        if engine == .flutter, launched {
+            let inset = windowed ? UIEdgeInsets.zero : (window?.safeAreaInsets ?? .zero)
+            let size = CGSize(width: w, height: h)
+            if lastFlutterSize != size || lastFlutterScale != contentScaleFactor || lastFlutterInsets != inset {
+                lastFlutterSize = size; lastFlutterScale = contentScaleFactor; lastFlutterInsets = inset
+                husk_flutter_set_pixel_ratio(Float(contentScaleFactor))
+                let k = contentScaleFactor
+                husk_flutter_set_insets(Int32(inset.top * k), Int32(inset.right * k), Int32(inset.bottom * k), Int32(inset.left * k))
+                husk_flutter_set_keyboard_inset(Int32((keyboardCoverage * k).rounded()))
+                husk_flutter_resize(Int32(w), Int32(h))
+            }
+        }
         // A landscape game is told its size once, when it starts, so it must not start while the screen is still
         // turning: wait for a surface that is wider than it is tall.
         // Unity games too: Fruit Ninja is a landscape one. If the screen has not turned after two seconds it is not going to,
@@ -678,7 +728,8 @@ struct TLUnityScreen: UIViewRepresentable {
     let dataDir: String
     var engine: TLNativeEngine = .unity
     var portrait = false
-    var scale: CGFloat = 2
+    var resolution: TLAppSettings.Resolution = .automatic
+    var maximumRenderEdge: Int = APKDisplayResolution.defaultMaximumEdge
     var onStats: ((String) -> Void)? = nil
     var onThreeFingerTap: (() -> Void)? = nil
     /// One view per game for the life of the process. The engine's GPU surface belongs to this view's layer and an
@@ -686,26 +737,27 @@ struct TLUnityScreen: UIViewRepresentable {
     private static var shared: [String: TLUnityUIView] = [:]
 
     /// The game's one view, made the first time it is asked for.
-    static func view(apk: String, extraApks: [String], dataDir: String, engine: TLNativeEngine, portrait: Bool, scale: CGFloat) -> TLUnityUIView {
+    static func view(apk: String, extraApks: [String], dataDir: String, engine: TLNativeEngine, portrait: Bool,
+                     resolution: TLAppSettings.Resolution, maximumRenderEdge: Int) -> TLUnityUIView {
         if let view = shared[apk] { return view }
-        let view = TLUnityUIView(apk: apk, extraApks: extraApks, dataDir: dataDir, engine: engine, portrait: portrait, scale: scale)
+        let view = TLUnityUIView(apk: apk, extraApks: extraApks, dataDir: dataDir, engine: engine, portrait: portrait,
+                                resolution: resolution, maximumRenderEdge: maximumRenderEdge)
         shared[apk] = view
         return view
     }
 
-    func makeUIView(context: Context) -> TLUnityUIView {
-        if let view = Self.shared[apk] {
-            view.windowed = false
-            view.transform = .identity
-            view.onStats = onStats; view.onThreeFingerTap = onThreeFingerTap; return view
-        }
-        let view = TLUnityUIView(apk: apk, extraApks: extraApks, dataDir: dataDir, engine: engine, portrait: portrait, scale: scale)
+    func makeUIView(context: Context) -> TLWindowHost {
+        let view = Self.view(apk: apk, extraApks: extraApks, dataDir: dataDir, engine: engine, portrait: portrait,
+                             resolution: resolution, maximumRenderEdge: maximumRenderEdge)
         view.onStats = onStats
         view.onThreeFingerTap = onThreeFingerTap
-        Self.shared[apk] = view
-        return view
+        return TLWindowHost(game: view, windowed: false)
     }
-    func updateUIView(_ view: TLUnityUIView, context: Context) { view.onStats = onStats; view.onThreeFingerTap = onThreeFingerTap }
+    func updateUIView(_ host: TLWindowHost, context: Context) {
+        host.game.onStats = onStats
+        host.game.onThreeFingerTap = onThreeFingerTap
+        host.setNeedsLayout()
+    }
 }
 
 /// Polls the runtime for the status line and its log, ten times a second at most.
@@ -833,9 +885,9 @@ struct TLCocosAttemptView: View {
             Group {
                 if let other = blockedBy {
                     VStack(spacing: 8) {
-                        Text("Another game is already loaded")
+                        Text("Another app is already loaded")
                             .font(.system(size: 16, weight: .semibold)).foregroundStyle(.white)
-                        Text("\(other) was started in this session, and a game cannot be unloaded once it has started. Close Husk completely and open it again to run \(app.label).")
+                        Text("\(other) was started in this session, and an app cannot be unloaded once it has started. Close APK Container completely and open it again to run \(app.label).")
                             .font(.system(size: 13)).foregroundStyle(.white.opacity(0.7))
                             .multilineTextAlignment(.center).frame(maxWidth: 460)
                     }
@@ -844,7 +896,8 @@ struct TLCocosAttemptView: View {
                     // The game always has the whole screen: it is told its size once, as it starts, so nothing may take space from it.
                     // The bar and the log are drawn over it instead, and hiding them shows everything underneath.
                     TLUnityScreen(apk: apk, extraApks: Array(app.apks.dropFirst()), dataDir: dataDir, engine: engine, portrait: portrait,
-                                  scale: settings.resolution.scale, onStats: { stats = $0 }, onThreeFingerTap: { toggleInterface() })
+                                  resolution: settings.resolution, maximumRenderEdge: settings.maximumRenderEdge,
+                                  onStats: { stats = $0 }, onThreeFingerTap: { toggleInterface() })
                         .background(Color.black)
                     .overlay {
                         // A game whose menus answer only a controller: with none paired, one on the glass. Hiding the bar leaves

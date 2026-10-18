@@ -1,7 +1,6 @@
 /*
  * husk-jit-arena: Husk's one executable region, handed out in 16 KiB pages to an engine that
- * frees and allocates again as it runs (the PS4 module: FEXCore's dispatcher and code buffer,
- * call trampolines, HLE veneers, shader walkers).
+ * frees and allocates again as it runs, including dispatchers, code buffers and call trampolines.
  *
  * The region is the one StikDebug grants at launch (or, on a Mac, a read+execute mapping with a
  * writable alias of the same pages). Every allocation has a writable address and an executable

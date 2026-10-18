@@ -13,26 +13,14 @@ enum WhatsNew {
     }
 
     /// The version whose notes these are. A build of the same version shows nothing again.
-    static let version = "3.0.0"
+    static let version = "1.0.0"
     static let items: [Item] = [
-        Item(symbol: "gamecontroller.fill", title: "A new Husk",
-             detail: "A console-style home: your games on a shelf, the one you pick fills the screen with its artwork, and Play is one tap away. Android and PS4 games side by side, a new library, in light or dark as Settings › Appearance says."),
-        Item(symbol: "playstation.logo", title: "PS4 games",
-             detail: "Add a PS4 game with the + button, as a fake package (.pkg), a folder of them, or an extracted game folder, and play it from your library. Updates install beside their game, shaders are kept between launches, and games that ask for a name bring up the keyboard."),
-        Item(symbol: "square.stack.3d.up.fill", title: "Hundreds more Android games",
-             detail: "Hundreds of newly working games on the compatibility list, unofficial ports like Sonic Robo Blast 2, Ring Racers, NetHack and PokeWilds, Flutter games that showed a blank screen draw again, Godot 4 games run, and Python games get online."),
-        Item(symbol: "arrow.down.circle.fill", title: "Complete Store downloads",
-             detail: "Games that keep their data in expansion files get them with the download, and games split into many pieces load."),
-        Item(symbol: "keyboard.fill", title: "Typing everywhere",
-             detail: "Text fields in Unity, Java, Flutter, cocos2d-x and SDL games bring up the keyboard."),
-        Item(symbol: "textformat", title: "Chinese, Japanese and Korean",
-             detail: "Download the fonts in Settings › Fonts, and games stop showing empty boxes."),
-        Item(symbol: "bolt.fill", title: "JIT on its own",
-             detail: "TrollStore installs turn JIT on at launch, and Husk says on screen when something can't start without it."),
-        Item(symbol: "iphone", title: "iOS 15",
-             detail: "Husk now runs on iOS 15.5 and later (PS4 games need iOS 17.4)."),
-        Item(symbol: "wrench.and.screwdriver.fill", title: "Fixes",
-             detail: "Android no longer crashes after its download, the full Android emulator moved into Settings with a warning, closing Husk from the app switcher isn't reported as a crash, and much more."),
+        Item(symbol: "square.stack.3d.up.fill", title: "Your Android apps",
+             detail: "A native app list with search, import, launch and app settings, sized for iPhone and iPad."),
+        Item(symbol: "arrow.up.left.and.arrow.down.right", title: "Display controls",
+             detail: "Use your device's native resolution, or lower the rendering resolution to reduce GPU load. Each app can have its own settings."),
+        Item(symbol: "bolt.fill", title: "JIT and memory support",
+             detail: "Husk's Android runtimes, JIT methods and extended-memory entitlements are preserved."),
     ]
 
     private static let seenKey = "husk.whatsNew.seen"
@@ -56,8 +44,8 @@ struct WhatsNewSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 26) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("What's New in Husk \(WhatsNew.version)").font(.largeTitle.weight(.bold))
-                        Text("A new look, PS4 games, and hundreds more Android games.").foregroundStyle(.secondary)
+                        Text("What's New in APK Container \(WhatsNew.version)").font(.largeTitle.weight(.bold))
+                        Text("Android apps, in their own container.").foregroundStyle(.secondary)
                     }
                     .padding(.top, 36)
                     ForEach(WhatsNew.items) { item in
@@ -102,15 +90,17 @@ final class AppUpdates: ObservableObject {
 
     @Published var available: Release?
 
-    private static let api = URL(string: "https://api.github.com/repos/Leviidev/Husk/releases/latest")!
     private static let checkedKey = "husk.updates.checked", dismissedKey = "husk.updates.dismissed"
 
     static var current: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0" }
 
     func check() async {
+        // Configure a fork release feed before enabling update checks.
+        guard let endpoint = Bundle.main.infoDictionary?["APKContainerReleaseAPI"] as? String,
+              let releaseURL = URL(string: endpoint), releaseURL.scheme == "https" else { return }
         let d = UserDefaults.standard
         if Date().timeIntervalSince1970 - d.double(forKey: Self.checkedKey) < 12 * 3600 { return }
-        var req = URLRequest(url: Self.api)
+        var req = URLRequest(url: releaseURL)
         req.timeoutInterval = 20
         req.setValue("Husk", forHTTPHeaderField: "User-Agent")
         guard let (data, response) = try? await URLSession.shared.data(for: req),

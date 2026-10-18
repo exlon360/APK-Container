@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import SwiftUI
 
-/// The way to turn on JIT, said plainly: StikJIT is built into Husk, and it is the recommended way.
+/// The way to turn on JIT, said plainly: StikJIT is built into APK Container, and it is the recommended way.
 ///
 /// Android and the Translation Layer's games both need memory they can write and then execute, which on iOS takes an attached
-/// debugger. Husk can be that debugger itself -- StikJIT, in the app, with no computer and no other app -- so this is the first
+/// debugger. APK Container can be that debugger itself -- StikJIT, in the app, with no computer and no other app -- so this is the first
 /// thing shown wherever JIT is missing, with the other methods one tap further. Once JIT is on it shrinks to a line saying so.
 struct JITCard: View {
     @ObservedObject private var jit = JITCoordinator.shared
@@ -13,7 +13,7 @@ struct JITCard: View {
 
     private var isOn: Bool { JITBootstrap.ready }
 
-    /// The way the card offers: StikJIT where Husk has it (iOS 26 and later), and otherwise whatever this device has -- TrollStore, a
+    /// The way the card offers: StikJIT where APK Container has it (iOS 26 and later), and otherwise whatever this device has -- TrollStore, a
     /// jailbreak -- since StikJIT cannot run on an iOS before 26.
     private var offered: JITMethod {
         if HuskBuiltInJIT.isAvailable { return .builtIn }
@@ -80,14 +80,14 @@ struct JITCard: View {
     private var explanation: String {
         switch offered {
         case .trollStore:
-            return "TrollStore can turn JIT on for Husk: it opens Husk and enables it, with no computer. "
+            return "TrollStore can turn JIT on for APK Container: it opens APK Container and enables it, with no computer. "
                  + "In TrollStore's Settings, URL Scheme must be on."
         case .jailbreak:
-            return "On a jailbroken device JIT is a setting. In Dopamine, turn on Allow JIT in Apps, then open Husk again."
+            return "On a jailbroken device JIT is a setting. In Dopamine, turn on Allow JIT in Apps, then open APK Container again."
         case .stikDebug:
-            return "StikDebug is installed, so Husk will open it to turn JIT on."
+            return "StikDebug is installed, so APK Container will open it to turn JIT on."
         default:
-            return "StikJIT is built into Husk. You can turn JIT on right here — no computer and no other app. "
+            return "StikJIT is built into APK Container. You can turn JIT on right here — no computer and no other app. "
                  + "Games and Android both need it."
         }
     }

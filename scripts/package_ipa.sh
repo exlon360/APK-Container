@@ -17,7 +17,7 @@
 set -euo pipefail
 
 HUSK_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-DD="${DD:-/tmp/husk_ipa}"
+DD="${DD:-$HUSK_ROOT/build/DerivedData}"
 TROLLSTORE=false
 OUT=""
 for arg in "$@"; do
@@ -28,7 +28,7 @@ for arg in "$@"; do
 done
 [[ "$OUT" == *.tipa ]] && TROLLSTORE=true
 if [ -z "$OUT" ]; then
-    OUT="$HOME/Desktop/Husk.$([ "$TROLLSTORE" = true ] && echo tipa || echo ipa)"
+    OUT="$HUSK_ROOT/build/APKContainer.$([ "$TROLLSTORE" = true ] && echo tipa || echo ipa)"
 fi
 mkdir -p "$DD"
 
@@ -51,6 +51,8 @@ fi
 # and nothing was regenerating it. A new file was therefore silently absent from
 # the target, and the only symptom was "cannot find X in scope" for a type that
 # is plainly right there on disk.
+mkdir -p "$(dirname "$OUT")"
+
 if command -v xcodegen >/dev/null 2>&1; then
     echo "==> regenerating the project from project.yml"
     (cd "$HUSK_ROOT/src/app" && xcodegen generate --quiet)
@@ -58,10 +60,18 @@ else
     echo "==> xcodegen not installed; using the checked-in project as-is" >&2
 fi
 
+SHADER_ARGS=()
+if [ "${APK_CONTAINER_PREBUILT_SHADERS:-NO}" = YES ]; then
+    [ -n "${APK_CONTAINER_RUNTIME_ASSETS:-}" ] || { echo "prebuilt shaders require verified runtime assets" >&2; exit 1; }
+    SHADER_ARGS+=("EXCLUDED_SOURCE_FILE_NAMES=Shaders.metal")
+fi
+
 echo "==> building"
 xcodebuild -project "$HUSK_ROOT/src/app/Husk.xcodeproj" -scheme Husk \
     -sdk iphoneos -configuration Release -derivedDataPath "$DD" \
     CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+    APK_CONTAINER_RUNTIME_ASSETS="${APK_CONTAINER_RUNTIME_ASSETS:-}" \
+    APK_CONTAINER_PREBUILT_SHADERS="${APK_CONTAINER_PREBUILT_SHADERS:-NO}" "${SHADER_ARGS[@]}" \
     build 2>&1 | tee "$DD/build.log" | grep -E "error:|BUILD (SUCCEEDED|FAILED)" || true
 
 # A failed build used to sail straight past this: the previous .app is still in
@@ -79,7 +89,7 @@ APP="$DD/Build/Products/Release-iphoneos/Husk.app"
 # The Java runtime in the app must be the one just built (build_java_runtime.sh): copied again here, and checked, so an IPA can
 # never carry an older one -- which looks exactly like Java fixes that did not work.
 JRT="$HUSK_ROOT/build/java-runtime"
-if [ -f "$JRT/husk-framework.dex" ]; then
+if [ -z "${APK_CONTAINER_RUNTIME_ASSETS:-}" ] && [ -f "$JRT/husk-framework.dex" ]; then
     rsync -a --delete "$JRT/" "$APP/java-runtime/"
     if ! cmp -s "$JRT/husk-framework.dex" "$APP/java-runtime/husk-framework.dex"; then
         echo "the app's Java framework is not build/java-runtime's; refusing to package" >&2
@@ -132,7 +142,7 @@ fi
 # @rpath/libANGLE-shared.dylib". Everything else in this validation passed. A
 # check that covers one of two required libraries is a check that reports
 # success on a bundle that cannot launch.
-for lib in libqemu-aarch64-softmmu.dylib libANGLE-shared.dylib libhuskps4.dylib; do
+for lib in libqemu-aarch64-softmmu.dylib libANGLE-shared.dylib; do
     if [ ! -f "$APP/Frameworks/$lib" ]; then
         echo "  MISSING  Frameworks/$lib" >&2
         rc=1
@@ -193,6 +203,8 @@ if [ "$TROLLSTORE" = true ]; then
     done
 fi
 SAPP="$STAGE/Payload/$(basename "$APP")"
+# Finder/resource-fork metadata is not signed content; strip it only from this disposable staging copy.
+xattr -cr "$SAPP"
 sign() { codesign --force --sign - --timestamp=none "$@"; }
 find "$SAPP" -name "*.dylib" -not -path "*/Frameworks/*.framework/*" | while read -r f; do sign "$f"; done
 for fw in "$SAPP"/Frameworks/*.framework; do [ -d "$fw" ] && sign "$fw"; done
@@ -200,13 +212,16 @@ for ex in "$SAPP"/PlugIns/*.appex; do [ -d "$ex" ] && sign "$ex"; done
 sign --entitlements "$ENT" "$SAPP"
 echo "==> entitlements in the signed app:"
 EMBEDDED_ENTS=$(codesign -d --entitlements - "$SAPP" 2>&1 || true)
-REQUIRED_PATTERN="get-task-allow|increased-memory|extended-virtual"
-[ "$TROLLSTORE" != true ] && REQUIRED_PATTERN+="|dynamic-codesigning"
-if ! grep -qE "$REQUIRED_PATTERN" <<< "$EMBEDDED_ENTS"; then
-    echo "==> entitlements did not embed; refusing to package" >&2
-    rm -rf "$STAGE"
-    exit 1
-fi
+REQUIRED_KEYS=(get-task-allow com.apple.developer.kernel.increased-memory-limit com.apple.developer.kernel.extended-virtual-addressing)
+[ "$TROLLSTORE" != true ] && REQUIRED_KEYS+=(dynamic-codesigning)
+codesign -d --entitlements - "$SAPP" > "$STAGE/embedded-entitlements.plist" 2>/dev/null
+for key in "${REQUIRED_KEYS[@]}"; do
+    value="$(/usr/libexec/PlistBuddy -c "Print :$key" "$STAGE/embedded-entitlements.plist" 2>/dev/null || true)"
+    if [ "$value" != true ]; then
+        echo "==> missing entitlement $key; refusing to package" >&2
+        exit 1
+    fi
+done
 if [ "$TROLLSTORE" = true ]; then
     BANNED_PATTERN=$(IFS='|'; echo "${BANNED_KEYS[*]}")
     if matched=$(grep -oE "$BANNED_PATTERN" <<< "$EMBEDDED_ENTS" | head -n 1) && [ -n "$matched" ]; then
@@ -217,6 +232,10 @@ if [ "$TROLLSTORE" = true ]; then
 fi
 TMP_OUT="$STAGE/package.tmp"
 ( cd "$STAGE" && zip -qry "$TMP_OUT" Payload )
+
+VERIFY_ARGS=()
+[ "$TROLLSTORE" != true ] || VERIFY_ARGS+=(--trollstore)
+python3 "$HUSK_ROOT/tests/verify_package.py" "$TMP_OUT" "${VERIFY_ARGS[@]}"
 
 # Atomic replace so a half-written IPA never sits where the good one was.
 mv -f "$TMP_OUT" "$OUT"

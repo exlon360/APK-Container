@@ -7,11 +7,11 @@ import UIKit
 /// "Generate App Clip": a home-screen icon for one game that opens it straight from the home screen.
 ///
 /// iOS puts an icon on the home screen from a configuration profile's Web Clip payload. Its URL here is
-/// husk://open_app?unique_identifier=<id>, which brings Husk up on that game and starts it. The profile is made here, served from
+/// apkcontainer://open_app?unique_identifier=<id>, which brings Husk up on that game and starts it. The profile is made here, served from
 /// a small HTTP server on this iPhone (127.0.0.1) and opened in Safari's in-app view, which hands it to Settings to install.
 @MainActor
 enum AppClip {
-    static let scheme = "husk"
+    static let scheme = "apkcontainer"
     static let host = "open_app"
 
     /// The link the clip opens.
@@ -23,7 +23,7 @@ enum AppClip {
         return c.url!
     }
 
-    /// husk://open_app?unique_identifier=<id>: open that game's page and start it. True when the URL was one.
+    /// apkcontainer://open_app?unique_identifier=<id>: open that game's page and start it. True when the URL was one.
     @discardableResult
     static func handle(_ url: URL) -> Bool {
         guard url.scheme?.lowercased() == scheme, url.host?.lowercased() == host,
@@ -43,7 +43,7 @@ enum AppClip {
         var payload: [String: Any] = [
             "PayloadType": "com.apple.webClip.managed",
             "PayloadVersion": 1,
-            "PayloadIdentifier": "app.husk.clip.\(safe(app.id)).webclip",
+            "PayloadIdentifier": "app.apkcontainer.clip.\(safe(app.id)).webclip",
             "PayloadUUID": clip,
             "PayloadDisplayName": app.label,
             "Label": app.label,
@@ -57,11 +57,11 @@ enum AppClip {
         let plist: [String: Any] = [
             "PayloadType": "Configuration",
             "PayloadVersion": 1,
-            "PayloadIdentifier": "app.husk.clip.\(safe(app.id))",
+            "PayloadIdentifier": "app.apkcontainer.clip.\(safe(app.id))",
             "PayloadUUID": outer,
-            "PayloadDisplayName": "\(app.label) (Husk)",
-            "PayloadDescription": "Puts \(app.label) on your Home Screen. It opens in Husk.",
-            "PayloadOrganization": "Husk",
+            "PayloadDisplayName": "\(app.label) (APK Container)",
+            "PayloadDescription": "Puts \(app.label) on your Home Screen. It opens in APK Container.",
+            "PayloadOrganization": "APK Container",
             "PayloadRemovalDisallowed": false,
             "PayloadContent": [payload],
         ]

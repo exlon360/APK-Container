@@ -887,6 +887,12 @@ final class AndroidHost: ObservableObject {
     @Published private(set) var status = "Starting Android…"
     @Published private(set) var packages: [Package] = AndroidHost.loadCatalogue()
     @Published private(set) var busy: String?
+    /// The guest surface may be shown only after Android confirms an app or its system dialog has focus.
+    @Published private(set) var appSurfaceAllowed = false
+    @Published private(set) var foregroundPackage: String?
+    private var presentationTask: Task<Void, Never>?
+    private var presentationID = UUID()
+    private var presentationOpening = false
     /// What just finished. Progress lives in `busy`; this is the sentence after.
     @Published var toast: Toast?
 
@@ -1899,14 +1905,120 @@ final class AndroidHost: ObservableObject {
         saveCatalogue(packages)
     }
 
+    /// Return to the native library and invalidate an in-flight launch as well as its foreground monitor.
+    func endAppPresentation() {
+        presentationID = UUID()
+        presentationTask?.cancel()
+        presentationTask = nil
+        appSurfaceAllowed = false
+        foregroundPackage = nil
+        if presentationOpening { busy = nil }
+        presentationOpening = false
+    }
+
     func launch(_ pkg: String, then: @escaping () -> Void) {
-        markLaunched(pkg)
-        busy = "Opening…"
-        Task.detached { [weak self] in
-            let out = (try? GuestBridge.shared.shell(
-                "monkey -p \(pkg) -c android.intent.category.LAUNCHER 1", timeout: 60)) ?? ""
-            HuskLog.log("bridge", "launch \(pkg): \(out.split(separator: "\n").last ?? "")")
-            await MainActor.run { self?.busy = nil; then() }
+        presentApp(pkg, settings: false, then: then)
+    }
+
+    func openAppInfo(_ pkg: String, then: @escaping () -> Void) {
+        presentApp(pkg, settings: true, then: then)
+    }
+
+    private func presentApp(_ pkg: String, settings: Bool, then: @escaping () -> Void) {
+        guard isReady, AndroidAppPresentation.validPackage(pkg) else {
+            say("Could not open app", "The compatibility runtime is not ready or the package name is invalid.", good: false)
+            return
         }
+        endAppPresentation()
+        let request = presentationID
+        presentationOpening = true
+        busy = "Opening…"
+        let installed = Set(packages.map(\.name))
+        presentationTask = Task.detached(priority: .userInitiated) { [weak self] in
+            do {
+                // Android 16's package shell supports query-activities --components; enumerate every HOME handler,
+                // not just Trebuchet, so replacing Android's default launcher cannot expose a desktop.
+                let homes = try GuestBridge.shared.run(
+                    "cmd package query-activities --components --user 0 -a android.intent.action.MAIN -c android.intent.category.HOME",
+                    timeout: 20)
+                let homePackages = AndroidAppPresentation.componentPackages(homes.out)
+                guard homes.status == 0, !homePackages.isEmpty else {
+                    throw PresentationError.message("Could not verify Android's launcher state. Try opening the app again.")
+                }
+                guard !homePackages.contains(pkg), !AndroidAppPresentation.knownLaunchers.contains(pkg) else {
+                    throw PresentationError.message("Android home launchers are hidden. Open an APK from Apps instead.")
+                }
+                guard !Task.isCancelled else { return }
+                let command = settings
+                    ? "am start -W -a android.settings.APPLICATION_DETAILS_SETTINGS -d package:\(pkg)"
+                    : "monkey -p \(pkg) -c android.intent.category.LAUNCHER 1"
+                let launched = try GuestBridge.shared.run(command, timeout: 60)
+                guard AndroidAppPresentation.launchSucceeded(status: launched.status, output: launched.out) else {
+                    throw PresentationError.message("Android could not launch this app. Check its installation and try again.")
+                }
+                var firstForeground: String?
+                // A successful launch command can return before the first activity is resumed. Keep the guest covered.
+                let deadline = Date().addingTimeInterval(30)
+                while !Task.isCancelled, Date() < deadline {
+                    let foreground = try Self.readForegroundPackage()
+                    if AndroidAppPresentation.allows(foreground, requested: pkg, homePackages: homePackages,
+                                                     installedPackages: installed, allowSettings: settings, launching: true) {
+                        firstForeground = foreground
+                        break
+                    }
+                    try await Task.sleep(nanoseconds: 400_000_000)
+                }
+                guard !Task.isCancelled else { return }
+                guard let firstForeground else {
+                    throw PresentationError.message("The app did not reach the foreground. Its Android desktop has stayed hidden.")
+                }
+                await MainActor.run {
+                    guard let self, self.presentationID == request else { return }
+                    self.presentationOpening = false
+                    self.busy = nil
+                    self.foregroundPackage = firstForeground
+                    self.appSurfaceAllowed = true
+                    if !settings { self.markLaunched(pkg) }
+                    then()
+                }
+                // One serial probe at a time; cancel on returning to Apps or backgrounding the host.
+                while !Task.isCancelled {
+                    try await Task.sleep(nanoseconds: 1_000_000_000)
+                    let foreground = try Self.readForegroundPackage()
+                    let allowed = AndroidAppPresentation.allows(foreground, requested: pkg, homePackages: homePackages,
+                                                                installedPackages: installed, allowSettings: settings, launching: false)
+                    await MainActor.run {
+                        guard let self, self.presentationID == request else { return }
+                        self.foregroundPackage = foreground
+                        if !allowed {
+                            self.endAppPresentation()
+                            HuskLog.log("bridge", "returned to Apps: foreground is \(foreground ?? "unavailable")")
+                        }
+                    }
+                    if !allowed { return }
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    guard let self, self.presentationID == request else { return }
+                    self.endAppPresentation()
+                    self.say("App closed or unavailable", error.localizedDescription, good: false)
+                }
+            }
+        }
+    }
+
+    nonisolated private static func readForegroundPackage() throws -> String? {
+        // A unique prefix excludes stale output if an earlier bridge command timed out.
+        let marker = "APK_FOCUS_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let result = try GuestBridge.shared.run(
+            "echo \(marker); dumpsys window displays | grep 'mCurrentFocus='", timeout: 10)
+        guard result.status == 0, let range = result.out.range(of: marker, options: .backwards) else { return nil }
+        return AndroidAppPresentation.foregroundPackage(String(result.out[range.upperBound...]))
+    }
+
+    private enum PresentationError: LocalizedError {
+        case message(String)
+        var errorDescription: String? { if case .message(let text) = self { return text }; return nil }
     }
 }

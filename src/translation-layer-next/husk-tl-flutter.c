@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <fcntl.h>
+#include <math.h>
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
@@ -367,7 +368,13 @@ static void mkdirs(const char *path)
     mkdir(t, 0755);
 }
 
-void tl_flutter_set_pixel_ratio(float r) { if (r > 0.5f) F.ratio = r; }
+void tl_flutter_set_pixel_ratio(float r)
+{
+    /* A low custom pixel budget on iPad can be below 0.5 pixels per point. Keep Flutter's logical size and touches aligned. */
+    if (!isfinite(r) || r <= 0 || r == F.ratio) return;
+    F.ratio = r;
+    post_event(2, 0);
+}
 
 bool tl_flutter_start(const tl_ga_config *cfg)
 {

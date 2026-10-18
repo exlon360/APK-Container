@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// The console look's pieces: its palette (dark or light, as Settings > Appearance says), the platform chips, the status dot,
-// and what Home and the Library need to know about an item's platform. Flat surfaces throughout -- no glass, no coloured washes.
+// Shared app-library colors, status indicators, and Android runtime details.
 import SwiftUI
 import UIKit
 
@@ -28,29 +27,6 @@ enum Console {
     static let textDim = adaptive(dark: UIColor(white: 1, alpha: 0.6), light: UIColor(white: 0, alpha: 0.55))
 }
 
-// MARK: - platform
-
-/// The platform chips: everything, Android (the translation layer and the emulator's apps), or PS4.
-enum PlatformFilter: String, CaseIterable, Identifiable {
-    case all, android, ps4
-    var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .all: return "All"
-        case .android: return "Android"
-        case .ps4: return "PS4"
-        }
-    }
-
-    func includes(_ item: LibraryItem) -> Bool {
-        switch self {
-        case .all: return true
-        case .android: return !item.isPS4
-        case .ps4: return item.isPS4
-        }
-    }
-}
-
 /// How an item runs, as a dot and a word: from this iPhone's own record first, then the compatibility list.
 struct ItemStatus: Equatable {
     let label: String
@@ -63,14 +39,10 @@ struct ItemStatus: Equatable {
 }
 
 extension LibraryItem {
-    var isPS4: Bool { if case .ps4 = self { return true }; return false }
-
     /// The platform line over the title on Home.
     var platformName: String {
         switch self {
-        case .ps4: return "PlayStation 4"
         case .app: return "Android · Emulator"
-        case .android: return "Android"
         case .game: return "Android"
         }
     }
@@ -109,7 +81,6 @@ extension LibraryItem {
         let path: String
         switch self {
         case .game(let g): path = TranslationLayer.root.appendingPathComponent(g.id).path
-        case .ps4(let g): path = g.folder.path
         default: return nil
         }
         let attrs = try? FileManager.default.attributesOfItem(atPath: path)
@@ -152,20 +123,5 @@ struct ConsoleChip: View {
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? .isSelected : [])
-    }
-}
-
-struct PlatformChips: View {
-    @Binding var selection: PlatformFilter
-    var compact = false
-
-    var body: some View {
-        HStack(spacing: 6) {
-            ForEach(PlatformFilter.allCases) { f in
-                ConsoleChip(title: f.title, selected: selection == f, compact: compact) {
-                    withAnimation(.easeOut(duration: 0.18)) { selection = f }
-                }
-            }
-        }
     }
 }

@@ -2,15 +2,12 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// A page pushed onto Home or the Library: a game's page, its settings or its technical details, an Android app's page,
-/// or Android's own.
+/// An APK app's details, settings or technical report.
 enum LibraryRoute: Hashable {
     case android(AndroidHost.Package)
     case game(String)
     case gameSettings(String)
     case gameReport(String)
-    case androidSystem
-    case ps4(String)              // a PS4 game, by title ID
 }
 
 /// Where the tabs and their stacks are steered from.
@@ -21,12 +18,9 @@ enum LibraryRoute: Hashable {
 @MainActor final class Router: ObservableObject {
     static let shared = Router()
 
-    @Published var tab: HuskTab = .home
-    @Published var home: [LibraryRoute] = []
+    @Published var tab: HuskTab = .library
     @Published var library: [LibraryRoute] = []
     @Published var libraryFilter: LibraryFilter = .all
-    /// The platform chips on Home and in the Library: one choice, shared by both.
-    @Published var platform: PlatformFilter = .all
     /// Downloads, as a sheet: Home's Downloads tile opens it.
     @Published var showDownloads = false
     /// Android's storage, as a sheet over whatever is showing.
@@ -51,9 +45,10 @@ enum LibraryRoute: Hashable {
     func resumeSwitch() {
         guard let id = UserDefaults.standard.string(forKey: Self.switchKey) else { return }
         UserDefaults.standard.removeObject(forKey: Self.switchKey)
-        HuskLog.log("ui", "opening \(id), which Husk was closed to switch to")
+        HuskLog.log("ui", "opening \(id), which APK Container was closed to switch to")
         tab = .library
-        library = id.hasPrefix("ps4:") ? [.ps4(String(id.dropFirst(4)))] : [.game(id)]
+        guard TranslationLayerStore.shared.apps.contains(where: { $0.id == id }) else { return }
+        library = [.game(id)]
         autoPlay = id
     }
 
@@ -75,8 +70,7 @@ enum LibraryRoute: Hashable {
 
     /// Pick APKs or bundles; Husk then asks where they go.
     func addSomething() {
-        // .folder too: a PS4 game is an extracted folder
-        HuskFilePicker.present(types: [.item, .folder]) { urls in IncomingFiles.shared.receive(urls) }
+        HuskFilePicker.present(types: [.item]) { urls in IncomingFiles.shared.receive(urls) }
     }
 }
 
@@ -121,7 +115,7 @@ struct AppDetailView: View {
             Section {
                 LabeledContent("Version", value: live.version ?? "—")
                 LabeledContent("Size", value: live.sizeBytes.map(Self.bytes) ?? "—")
-                LabeledContent("Last Used", value: live.lastUsed.map(Self.when) ?? "Never from Husk")
+                LabeledContent("Last Used", value: live.lastUsed.map(Self.when) ?? "Never from APK Container")
             }
 
             Section {
@@ -201,13 +195,7 @@ struct AppDetailView: View {
     /// Android's own page for the app — permissions, storage, force stop. It
     /// is a screen Android already has and Husk should not be reimplementing.
     private func appInfo() {
-        let pkg = app.name
-        DispatchQueue.global(qos: .userInitiated).async {
-            _ = try? GuestBridge.shared.shell(
-                "am start -a android.settings.APPLICATION_DETAILS_SETTINGS "
-              + "-d package:\(pkg)", timeout: 30)
-        }
-        onOpenGuest()
+        host.openAppInfo(app.name, then: onOpenGuest)
     }
 
     // MARK: formatting

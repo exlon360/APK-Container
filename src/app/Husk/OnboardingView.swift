@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import SwiftUI
 
-/// What Husk asks on a first install, and remembers.
+/// What APK Container asks on a first install, and remembers.
 ///
 /// Deliberately versioned rather than a plain "seen it" flag: a later build that
 /// adds a question needs to be able to ask it, and existing installs must not be
@@ -21,7 +21,7 @@ enum Onboarding {
         UserDefaults.standard.set(version, forKey: key)
     }
 
-    /// What apps inside Husk are told about where you are, chosen in setup.
+    /// What apps inside APK Container are told about where you are, chosen in setup.
     // TODO: hand these to the guest (TL locale/time zone and Android's persist.sys.locale / TZ); stored only for now.
     static let languageKey = "husk.guest.language"
     static let regionKey = "husk.guest.region"
@@ -34,12 +34,12 @@ enum Onboarding {
 }
 
 /// First run: setup in the manner of the iPhone's own -- language, region, time zone, the
-/// optional settings, JIT -- and an offer of a walkthrough. Shown once; people who set up an older Husk get What's New instead.
+/// optional settings, JIT -- and an offer of a walkthrough. Shown once; people who set up an older APK Container get What's New instead.
 struct OnboardingView: View {
     let onDone: () -> Void
 
     private enum Step: Int, CaseIterable {
-        case welcome, language, region, timeZone, options, jit, ask, tour
+        case welcome, options, jit, ask, tour
     }
 
     @State private var step: Step = .welcome
@@ -99,7 +99,7 @@ struct OnboardingView: View {
             if step != .ask {
                 VStack(spacing: 14) {
                     dots
-                    Button(step == .tour && tourPage == Self.tour.count - 1 ? "Start Using Husk" : "Continue") { next() }
+                    Button(step == .tour && tourPage == Self.tour.count - 1 ? "Start Using APK Container" : "Continue") { next() }
                         .buttonStyle(PrimaryButtonStyle())
                 }
                 .padding(.horizontal, 28)
@@ -164,18 +164,6 @@ struct OnboardingView: View {
     private func page(_ step: Step) -> some View {
         switch step {
         case .welcome: welcome
-        case .language:
-            picker(symbol: "globe", title: "Language",
-                   subtitle: "The language apps and games inside Husk see. Husk itself follows your iPhone.",
-                   rows: Self.languages, selection: $language)
-        case .region:
-            picker(symbol: "map.fill", title: "Region",
-                   subtitle: "For apps that ask for your country.",
-                   rows: Self.regions, selection: $region)
-        case .timeZone:
-            picker(symbol: "clock.fill", title: "Time Zone",
-                   subtitle: "For apps that show local times.",
-                   rows: Self.timeZones, selection: $timeZone)
         case .options: options
         case .jit: jitPage
         case .ask: ask
@@ -207,9 +195,9 @@ struct OnboardingView: View {
         VStack(spacing: 18) {
             Spacer()
             HuskMark(size: 110)
-            Text("Welcome to Husk")
+            Text("Welcome to APK Container")
                 .font(.system(size: 34, weight: .bold))
-            Text("Android and PS4 games, on your iPhone.")
+            Text("Android apps, on your iPhone and iPad.")
                 .font(.title3).foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             Text("A few quick choices first. Everything here can be changed later in Settings.")
@@ -288,13 +276,6 @@ struct OnboardingView: View {
                 .padding(16)
                 .huskCard()
 
-                choice(icon: "bolt.fill", title: "Start Android When Husk Opens",
-                       detail: "Off by default. The full Android emulator is experimental: starting it on launch can cause unwanted "
-                             + "bugs, freezes and crashes, and slows every launch. Games and apps don't need it.",
-                       isOn: $autoStart, caution: true)
-                choice(icon: "rectangle.landscape.rotate", title: "Landscape Android Screen",
-                       detail: "For the Android emulator: games fill a landscape screen, portrait apps get letterboxed.",
-                       isOn: $landscape)
                 choice(icon: "speaker.wave.2.fill", title: "Android Sound",
                        detail: "Adds a sound device to the emulator. It can't be saved while this is on, so it boots from cold.",
                        isOn: $sound)
@@ -328,8 +309,8 @@ struct OnboardingView: View {
     /// What the JIT page says is already in place, if anything.
     private var jitState: String? {
         if JITBootstrap.ready { return "JIT is on." }
-        if jit.method == .stikDebug { return "Husk will use StikDebug." }
-        if jit.method == .trollStore { return "Husk will use TrollStore." }
+        if jit.method == .stikDebug { return "APK Container will use StikDebug." }
+        if jit.method == .trollStore { return "APK Container will use TrollStore." }
         switch jit.pairingSource {
         case .onDevice: return "Paired on this device."
         case .imported: return "Pairing file imported."
@@ -340,7 +321,7 @@ struct OnboardingView: View {
     private var jitPage: some View {
         VStack(spacing: 18) {
             header("bolt.fill", "Turn On JIT",
-                   "Games need JIT, which iOS only grants to an attached debugger. StikJIT is built into Husk and turns it on from "
+                   "Games need JIT, which iOS only grants to an attached debugger. StikJIT is built into APK Container and turns it on from "
                  + "inside the app, with no computer. StikDebug and TrollStore work too.")
             if let state = jitState {
                 Label(state, systemImage: "checkmark.circle.fill")
@@ -349,7 +330,7 @@ struct OnboardingView: View {
             Button(jitState == nil ? "Set Up StikJIT Now" : "Change JIT Setup") { settingUpJIT = true }
                 .font(.body.weight(.semibold))
                 .foregroundStyle(Theme.accent)
-            Text("You can skip this: Husk asks again when a game needs it, and it is in Settings › JIT & Sideload.")
+            Text("You can skip this: APK Container asks again when a game needs it, and it is in Settings › JIT & Sideload.")
                 .font(.footnote).foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 36)
@@ -360,7 +341,7 @@ struct OnboardingView: View {
     private var ask: some View {
         VStack(spacing: 18) {
             Spacer()
-            header("map.circle.fill", "Would you like a walkthrough?", "A quick look at how Husk works: where your games are, how to add more, and where the settings live.")
+            header("map.circle.fill", "Would you like a walkthrough?", "A quick look at how APK Container works: where your games are, how to add more, and where the settings live.")
             Spacer()
             VStack(spacing: 12) {
                 Button("Show Me Around") {
@@ -382,22 +363,14 @@ struct OnboardingView: View {
     private struct TourCard { let symbol: String; let title: String; let text: String }
 
     private static let tour: [TourCard] = [
-        TourCard(symbol: "house.fill", title: "Home",
-                 text: "Your games on a shelf, the last one played first. Tap a game to pick it and its artwork fills the screen; tap it "
-                     + "again, or press Play, to start it. The ⋯ button has its settings and more."),
-        TourCard(symbol: "square.grid.2x2.fill", title: "Library",
-                 text: "Everything you have added, by platform. Use All, Android and PS4 to filter, search by name, and long-press any "
-                     + "game for its options. The dot shows how it runs: green plays, orange opens, red is broken."),
-        TourCard(symbol: "plus.circle.fill", title: "Adding Games",
-                 text: "Tap + to add an Android APK or bundle (.xapk, .apkm, .apks), or a PS4 game: a fake package (.pkg), a folder of "
-                     + "them, or an extracted game folder. You can also share files to Husk from Files or Safari."),
-        TourCard(symbol: "cart.fill", title: "Store",
-                 text: "Browse and download Android apps from Google Play, with a guest account or your own, and see how each runs in Husk."),
-        TourCard(symbol: "bolt.fill", title: "Settings & JIT",
-                 text: "Games need JIT. Turn it on from Home or Settings › JIT & Sideload. Settings also has performance, appearance, "
-                     + "input, and the optional full Android emulator."),
-        TourCard(symbol: "questionmark.circle.fill", title: "Help",
-                 text: "Stuck? Settings › Help answers the common problems, and a game that crashes Husk leaves a report to share."),
+        TourCard(symbol: "square.stack.3d.up.fill", title: "Apps",
+                 text: "Your installed Android apps in one list. Search by name, tap an app to open it, and use its menu for settings, reports and save backups."),
+        TourCard(symbol: "plus.circle.fill", title: "Import APKs",
+                 text: "Tap + to add an APK or a split bundle (.xapk, .apkm or .apks). You can also share these files from Files or Safari."),
+        TourCard(symbol: "arrow.up.left.and.arrow.down.right", title: "Display",
+                 text: "Apps use the device's native display by default. Choose a lower resolution in Settings or an app's own settings to reduce graphics work."),
+        TourCard(symbol: "bolt.fill", title: "JIT & Settings",
+                 text: "Enable JIT in Settings › JIT & Sideload. Android Runtime settings prepare the optional compatibility runtime for apps that need it."),
     ]
 
     private func tourCard(_ card: TourCard) -> some View {

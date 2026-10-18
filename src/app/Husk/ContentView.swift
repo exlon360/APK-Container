@@ -14,8 +14,8 @@ struct ContentView: View {
     @ObservedObject private var host = AndroidHost.shared
 
     @State private var started = false
-    /// Asking before full Android starts: it is the experimental part of Husk
-    @State private var confirmAndroid = false
+    /// A user-requested app launch or import waiting for JIT or runtime installation.
+    @State private var runtimeRequested = false
     @State private var showLogs = false
     /// True while the guest's own screen is being shown instead of the library.
     /// Starts false: the tab UI is the home screen, and the guest -- including
@@ -35,9 +35,12 @@ struct ContentView: View {
     @ObservedObject private var tlStore = TranslationLayerStore.shared
     @ObservedObject private var crash = CrashReport.shared
     @ObservedObject private var massTest = MassTest.shared
-    @ObservedObject private var updates = AppUpdates.shared
-    @State private var showWhatsNew = false
-    @AppStorage(Holiday.key) private var holiday = true
+
+    /// Guest pixels are exposed only after the host validates an app foreground.
+    /// Keep its Metal surface mounted while hidden so the renderer remains live.
+    private var appSurfaceVisible: Bool {
+        showGuestScreen && started && runner.isRunning && host.appSurfaceAllowed
+    }
 
     var body: some View {
         ZStack {
@@ -51,28 +54,18 @@ struct ContentView: View {
             // Android is then a matter of hiding what is over it, which is also
             // why it appears instantly rather than reloading.
             TabView(selection: tabSelection) {
-                HomeView()
-                    .tabItem { Label("Home", systemImage: "house.fill") }
-                    .tag(HuskTab.home)
-
                 LibraryScreen()
-                    .tabItem { Label("Library", systemImage: "square.grid.2x2.fill") }
+                    .tabItem { Label("Apps", systemImage: "square.stack.3d.up.fill") }
                     .tag(HuskTab.library)
-
-                StoreView()
-                    .tabItem { Label("Store", systemImage: "cart.fill") }
-                    .tag(HuskTab.store)
 
                 SettingsTab()
                     .tabItem { Label("Settings", systemImage: "gearshape.fill") }
                     .tag(HuskTab.settings)
             }
-            .opacity(showGuestScreen && started && runner.isRunning ? 0 : 1)
-
-            // Christmas: snow over the tabs (never over Android or an app's window, which come after it)
-            if holiday && Holiday.inSeason && !(showGuestScreen && started && runner.isRunning) {
-                Snowfall().ignoresSafeArea()
-            }
+            .opacity(appSurfaceVisible ? 0 : 1)
+            .allowsHitTesting(!appSurfaceVisible)
+            .accessibilityHidden(appSurfaceVisible)
+            .animation(nil, value: appSurfaceVisible)
 
             // Multitasking: an app in a window over everything else in Husk (AppWindows.swift).
             AppWindowLayer()
@@ -100,9 +93,11 @@ struct ContentView: View {
             if started && runner.isRunning {
                 GuestScreenView(showLogs: $showLogs,
                                 chromeHidden: false,
-                                onBack: { showGuestScreen = false })
-                    .opacity(showGuestScreen ? 1 : 0)
-                    .allowsHitTesting(showGuestScreen)
+                                onBack: endAppPresentation)
+                    .opacity(appSurfaceVisible ? 1 : 0)
+                    .allowsHitTesting(appSurfaceVisible)
+                    .accessibilityHidden(!appSurfaceVisible)
+                    .animation(nil, value: appSurfaceVisible)
             }
 
             // Over the tabs and over the start screen: when Husk is starting
@@ -115,14 +110,10 @@ struct ContentView: View {
                         if ready { withAnimation(.easeInOut(duration: 0.45)) { booting = false } }
                     }
             }
-
         }
         .tint(theme.accentColor)
-        // The user's appearance: the system's, unless they pinned one. Set on the
-        // window rather than with .preferredColorScheme — see Theme.apply.
         .onAppear { Theme.apply(appearance) }
         .onChange(of: appearance) { Theme.apply($0) }
-        .animation(.snappy(duration: 0.22), value: showGuestScreen)
         .animation(.snappy(duration: 0.25), value: host.toast)
         .fullScreenCover(isPresented: $showOnboarding) {
             OnboardingView {
@@ -134,39 +125,12 @@ struct ContentView: View {
             }
         }
         .sheet(isPresented: $showLogs) { LogView() }
-        .alert("Start Android?", isPresented: $confirmAndroid) {
-            Button("Start") { startFromLibrary() }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Full Android emulation is experimental. It is slow, takes minutes to start, and can freeze or crash Husk. "
-               + "Games and apps run much better in the Translation Layer.")
+        .sheet(item: Binding(get: { showOnboarding ? nil : crash.pending }, set: { crash.pending = $0 })) { report in
+            CrashReportSheet(report: report)
         }
-        // A game that ended Husk last time: say so, with its report.
-        .sheet(item: Binding(get: { showOnboarding ? nil : crash.pending }, set: { crash.pending = $0 }),
-               onDismiss: { if WhatsNew.due { showWhatsNew = true } }) { r in
-            CrashReportSheet(report: r)
-        }
-        // After an update: what it brought, once.
-        .fullScreenCover(isPresented: $showWhatsNew) {
-            WhatsNewSheet { WhatsNew.markSeen(); showWhatsNew = false }
-        }
-        // A newer Husk is on GitHub.
-        .alert("Husk \(updates.available?.version ?? "") Is Available", isPresented: Binding(
-                get: { updates.available != nil && !showOnboarding && !showWhatsNew && crash.pending == nil },
-                set: { if !$0 { updates.dismiss() } })) {
-            Button("View Release") {
-                if let page = updates.available?.page { UIApplication.shared.open(page) }
-                updates.dismiss()
-            }
-            Button("Not Now", role: .cancel) { updates.dismiss() }
-        } message: {
-            Text("You have \(AppUpdates.current). The new version's IPA is on its release page.")
-        }
-        .task { await updates.check() }
         .task { await CompatibilityStore.shared.refresh() }
         .sheet(isPresented: $router.showFiles) { FilesTab() }
         .sheet(isPresented: $router.showDownloads) { DownloadsTab() }
-        // Pictures for the apps here: read the index on launch and whenever the set of apps changes.
         .task(id: showcasePackages) { showcase.refresh(for: showcasePackages) }
         .alert("Metadata Updated", isPresented: Binding(get: { showcase.shouldAsk && !showOnboarding },
                                                          set: { if !$0 { showcase.asked() } })) {
@@ -176,22 +140,22 @@ struct ContentView: View {
             let n = showcase.updates.count
             Text("Metadata for \(n) of your app\(n == 1 ? "" : "s") has been updated. Would you like to download the updates?")
         }
-        // An APK shared to Husk: where does it go?
         .sheet(isPresented: Binding(get: { !incoming.waiting.isEmpty },
                                     set: { if !$0 { incoming.discard() } })) {
             IncomingChooser()
                 .huskDetents([.medium], dragIndicator: true)
         }
-        // APKs meant for Android wait until it can take them.
-        .onChange(of: host.isReady) { ready in
-            incoming.installForAndroidIfReady()
-            // An app asked for while Android was off: open it now.
-            if ready, let pkg = router.pendingAndroidLaunch {
-                router.pendingAndroidLaunch = nil
-                host.launch(pkg) { showGuestScreen = true }
+        .onChange(of: host.isReady) { _ in resumeRuntimeRequests() }
+        .onChange(of: host.busy) { _ in resumeRuntimeRequests() }
+        .onChange(of: host.appSurfaceAllowed) { allowed in
+            // No cross-fade: a rejected foreground must disappear immediately.
+            if !allowed { showGuestScreen = false }
+        }
+        .onChange(of: guest.state) { state in
+            if state == .ready, runtimeRequested || !incoming.forAndroid.isEmpty {
+                startFromLibrary()
             }
         }
-        .onChange(of: host.busy) { _ in incoming.installForAndroidIfReady() }
         .sheet(isPresented: $jit.showSetup) { JITSetupFlow() }
         // The built-in helper attaches while Husk stays in the foreground, so
         // there is no relaunch to trigger the region claim below; this is it.
@@ -212,9 +176,8 @@ struct ContentView: View {
             // the developer mass test: the last app's fate, then the next app (it clears a crash report it has written down)
             massTest.resume(crash: crash)
             if crash.pending == nil, !massTest.active { router.resumeSwitch() }
-            if crash.pending == nil, WhatsNew.due { showWhatsNew = true }
-            router.openGuest = { showGuestScreen = true }
-            router.startAndroid = { confirmAndroid = true }
+            router.openGuest = showAppPresentation
+            router.startAndroid = { startFromLibrary() }
             evaluate()
         }
         // The two-parameter onChange is iOS 17; this single-parameter form is
@@ -224,15 +187,36 @@ struct ContentView: View {
             // StikDebug relaunches Husk after attaching, so returning to the
             // foreground is the moment worth re-checking, not first launch.
             if phase == .active { evaluate() }
+            if phase == .background { endAppPresentation() }
         }
     }
 
-    /// The selected tab. Choosing the tab already shown takes Home or the Library back to its top, as a tab bar does.
+    private func showAppPresentation() {
+        guard scenePhase == .active, host.appSurfaceAllowed else { return }
+        showGuestScreen = true
+    }
+
+    private func endAppPresentation() {
+        showGuestScreen = false
+        host.endAppPresentation()
+    }
+
+    /// Finish queued installs before opening an app, so bridge operations do not race.
+    private func resumeRuntimeRequests() {
+        guard host.isReady, host.busy == nil else { return }
+        if !incoming.forAndroid.isEmpty {
+            incoming.installForAndroidIfReady()
+        } else if let package = router.pendingAndroidLaunch {
+            router.pendingAndroidLaunch = nil
+            host.launch(package, then: showAppPresentation)
+        }
+    }
+
+    /// Selecting Apps again returns to the top of its navigation stack.
     private var tabSelection: Binding<HuskTab> {
         Binding(get: { router.tab }, set: { tab in
             if tab == router.tab {
                 switch tab {
-                case .home: router.home = []
                 case .library: router.library = []
                 default: break
                 }
@@ -270,6 +254,13 @@ struct ContentView: View {
         // After the first call this is a no-op, and on success it also detaches the debugger.
         JITBootstrap.prewarm()
 
+        // Resume a requested app/import after installation or JIT attachment.
+        if !started, !showOnboarding, guest.state == .ready,
+           runtimeRequested || !incoming.forAndroid.isEmpty || router.pendingAndroidLaunch != nil {
+            start()
+            return
+        }
+
         // Start on launch, when that is what was asked for.
         //
         // This deliberately did nothing for a long time, and the reason was
@@ -290,7 +281,7 @@ struct ContentView: View {
             return
         }
         guard !AutoStart.lastOneDied() else {
-            HuskLog.log("ui", "Husk closed while starting Android on launch last time; not starting it on its own this time")
+            HuskLog.log("ui", "APK Container closed while starting Android on launch last time; not starting it on its own this time")
             return
         }
         HuskLog.log("ui", "starting Android on launch")
@@ -306,11 +297,13 @@ struct ContentView: View {
     /// the action behind a button reads as a button that does nothing, so the
     /// JIT prompt is raised here instead.
     private func startFromLibrary() {
+        runtimeRequested = true
         guard JITBootstrap.ready else {
             HuskLog.log("ui", "start asked for without JIT; enabling with \(jit.resolvedMethod.title)")
             jit.enable()
             return
         }
+        guard guest.state == .ready else { return }
         start()
     }
 
@@ -344,7 +337,7 @@ struct ContentView: View {
                                  + "answering and MAP_JIT does not execute here")
                 // Said on screen too: a Start button that silently does nothing reads as a hang (#122).
                 host.say("Android can't start without JIT",
-                         JITBootstrap.lastFailure ?? "Husk could not get executable memory. Turn JIT on again (Settings > JIT) and retry.",
+                         JITBootstrap.lastFailure ?? "APK Container could not get executable memory. Turn JIT on again (Settings > JIT) and retry.",
                          good: false)
                 booting = false
                 return
@@ -352,12 +345,8 @@ struct ContentView: View {
             HuskLog.log("jit", "no dual mapping, but MAP_JIT executes -- letting "
                              + "QEMU map its own buffer")
         }
-        // A PS4 game started in this run holds the same JIT region QEMU would take.
-        if let console = husk_console_loaded_game() {
-            HuskLog.log("jit", "refusing to start QEMU: \(String(cString: console)) is loaded in this run; close Husk first")
-            return
-        }
         started = true
+        runtimeRequested = false
         router.androidStarted = true
         QemuRunner.shared.start()
         // Start probing the bridge now, not when the library happens to be
@@ -474,18 +463,9 @@ struct GuestScreenView: View {
 
                         Menu {
                             Button { onBack() } label: {
-                                Label("Back to Husk", systemImage: "chevron.left")
+                                Label("Back to Apps", systemImage: "chevron.left")
                             }
-                            // Android's own Home key, over the bridge. Three-button
-                            // navigation is not drawn in this guest, so without it
-                            // there is no way out of an app from inside Android.
-                            Button {
-                                DispatchQueue.global(qos: .userInitiated).async {
-                                    _ = try? GuestBridge.shared.shell(
-                                        "input keyevent KEYCODE_HOME", timeout: 20)
-                                    HuskLog.log("ui", "sent HOME to Android")
-                                }
-                            } label: { Label("Home", systemImage: "house") }
+                            // Return to the container library without opening an Android desktop.
                             // Android will not reshape its panel, so when an app
                             // asks for landscape it turns its own composition
                             // inside a portrait frame. This turns it back.
@@ -500,7 +480,7 @@ struct GuestScreenView: View {
                             Button {
                                 QemuRunner.shared.saveState(reason: "asked from full screen")
                             } label: {
-                                Label(runner.isSavingState ? "Saving…" : "Save Android",
+                                Label(runner.isSavingState ? "Saving…" : "Save Runtime",
                                       systemImage: "externaldrive.badge.checkmark")
                             }
                             .disabled(runner.isSavingState)

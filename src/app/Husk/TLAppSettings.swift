@@ -19,35 +19,7 @@ struct TLAppSettings: Codable, Equatable {
         }
     }
 
-    /// How many pixels the game draws for each point of the screen. Fewer pixels run faster and take less memory.
-    enum Resolution: String, Codable, CaseIterable, Identifiable {
-        case low, medium, high, native
-        var id: String { rawValue }
-        var title: String {
-            switch self {
-            case .low: return "Low"
-            case .medium: return "Medium"
-            case .high: return "High"
-            case .native: return "Native"
-            }
-        }
-        var detail: String {
-            switch self {
-            case .low: return "1 pixel per point. Fastest."
-            case .medium: return "1.5 pixels per point."
-            case .high: return "2 pixels per point. The default."
-            case .native: return "Every pixel the screen has. Sharpest, and heaviest."
-            }
-        }
-        @MainActor var scale: CGFloat {
-            switch self {
-            case .low: return 1
-            case .medium: return 1.5
-            case .high: return 2
-            case .native: return UIScreen.main.scale
-            }
-        }
-    }
+    typealias Resolution = APKDisplayResolution.Preset
 
     /// When the on-screen controller is offered.
     enum PadMode: String, Codable, CaseIterable, Identifiable {
@@ -79,7 +51,8 @@ struct TLAppSettings: Codable, Equatable {
 
     var orientation: Orientation = .auto
     var window: WindowMode = .auto
-    var resolution: Resolution = .high
+    var resolution: Resolution = .automatic
+    var maximumRenderEdge: Int = APKDisplayResolution.defaultMaximumEdge
     /// The frames-per-second readout in the top bar.
     var showStats = true
     /// Start with nothing over the picture: no bar, no controller, no readout. Three fingers tapped together bring them back.
@@ -100,7 +73,9 @@ struct TLAppSettings: Codable, Equatable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         orientation = try c.decodeIfPresent(Orientation.self, forKey: .orientation) ?? .auto
-        resolution = try c.decodeIfPresent(Resolution.self, forKey: .resolution) ?? .high
+        resolution = try c.decodeIfPresent(Resolution.self, forKey: .resolution) ?? .automatic
+        maximumRenderEdge = APKDisplayResolution.clampedMaximumEdge(
+            try c.decodeIfPresent(Int.self, forKey: .maximumRenderEdge) ?? APKDisplayResolution.defaultMaximumEdge)
         showStats = try c.decodeIfPresent(Bool.self, forKey: .showStats) ?? true
         cleanView = try c.decodeIfPresent(Bool.self, forKey: .cleanView) ?? false
         keepAwake = try c.decodeIfPresent(Bool.self, forKey: .keepAwake) ?? true
@@ -163,6 +138,19 @@ struct TLAppSettingsView: View {
             .filter { FileManager.default.fileExists(atPath: $0.path) }
     }
 
+    private var resolutionPreview: String {
+        let screen = UIScreen.main
+        let short = min(screen.bounds.width, screen.bounds.height)
+        let long = max(screen.bounds.width, screen.bounds.height)
+        let portrait = app.drawsPortrait(settings)
+        guard let surface = APKDisplayResolution.surface(width: Double(portrait ? short : long),
+                                                         height: Double(portrait ? long : short),
+                                                         nativeScale: Double(screen.nativeScale), preset: settings.resolution,
+                                                         maximumEdge: settings.maximumRenderEdge,
+                                                         defaultPreset: APKDisplayResolution.defaultPreset) else { return "Unavailable" }
+        return "\(surface.width) × \(surface.height)"
+    }
+
     var body: some View {
         Form {
             Section {
@@ -176,7 +164,7 @@ struct TLAppSettingsView: View {
                 }
                 .padding(.vertical, 2)
             } footer: {
-                Text("What the game is called in Husk. The game itself is not changed.")
+                Text("The app's name in APK Container. The Android app itself is not changed.")
             }
 
             Section {
@@ -184,15 +172,27 @@ struct TLAppSettingsView: View {
                     ForEach(TLAppSettings.Orientation.allCases) { Text($0.title).tag($0) }
                 }
                 Picker("Resolution", selection: $settings.resolution) {
-                    ForEach(TLAppSettings.Resolution.allCases) { Text($0.title).tag($0) }
+                    ForEach(TLAppSettings.Resolution.allCases) {
+                        Text($0 == .automatic ? "Default (\(APKDisplayResolution.defaultPreset.title))" : $0.title).tag($0)
+                    }
                 }
+                if settings.resolution == .custom {
+                    Stepper("Maximum edge: \(settings.maximumRenderEdge) px", value: $settings.maximumRenderEdge,
+                            in: APKDisplayResolution.customRange, step: 80)
+                    Picker("Pixel limit", selection: $settings.maximumRenderEdge) {
+                        ForEach(Array(Set([720, 1080, 1440, 1920, 2560, 3072, 4096, settings.maximumRenderEdge])).sorted(), id: \.self) {
+                            Text("\($0) px").tag($0)
+                        }
+                    }
+                }
+                DetailRow(label: "Full-screen preview", value: resolutionPreview)
                 Toggle("Performance readout", isOn: $settings.showStats)
                 Toggle("Keep the screen on", isOn: $settings.keepAwake)
             } header: {
                 Text("Display")
             } footer: {
-                Text("\(settings.resolution.detail) Orientation and resolution apply the next time the game starts, and a game already "
-                   + "running in this session needs Husk closed and opened again.")
+                Text("\(settings.resolution.detail) Phone and iPad proportions are preserved. Lower resolutions reduce pixel workload; "
+                   + "actual speed depends on the app. Changes apply on the next launch; close APK Container completely first if this app is already loaded.")
             }
 
             Section {
@@ -204,8 +204,8 @@ struct TLAppSettingsView: View {
             } header: {
                 Text("Multitasking")
             } footer: {
-                Text("In a window, \(app.label) runs over Husk: move it by its title bar, resize it from the corner, and minimise it to "
-                   + "the dock at the edge of the screen while you use the rest of Husk.")
+                Text("In a window, \(app.label) runs over APK Container: move it by its title bar, resize it from the corner, and minimise it to "
+                   + "the dock at the edge of the screen while you use the rest of APK Container.")
             }
 
             Section {
@@ -224,7 +224,7 @@ struct TLAppSettingsView: View {
                 } header: {
                     Text("Mods")
                 } footer: {
-                    Text("Geode is the mod loader for Geometry Dash. With it on, Husk downloads Geode for this version of the "
+                    Text("Geode is the mod loader for Geometry Dash. With it on, APK Container downloads Geode for this version of the "
                        + "game, and mods are found and installed in the game itself, from Geode's button on the main menu. "
                        + "Applies the next time the game starts.")
                 }
@@ -255,21 +255,21 @@ struct TLAppSettingsView: View {
             } header: {
                 Text("Home Screen")
             } footer: {
-                Text("Puts \(app.label) on your Home Screen with its own icon. Tapping it opens Husk straight into the game. Husk "
+                Text("Puts \(app.label) on your Home Screen with its own icon. Tapping it opens APK Container straight into the app. APK Container "
                    + "downloads a profile: open Settings, tap Profile Downloaded, then Install.")
             }
 
             Section {
-                DetailRow(label: "Saved by the game", value: dataSize, mono: false)
+                DetailRow(label: "Saved by the app", value: dataSize, mono: false)
                 Button(role: .destructive) { confirmReset = true } label: {
-                    Label("Reset Game Data", systemImage: "arrow.counterclockwise")
+                    Label("Reset App Data", systemImage: "arrow.counterclockwise")
                 }
                 .disabled(inUse || dataDirs.isEmpty)
             } header: {
                 Text("Data")
             } footer: {
-                Text(inUse ? "The game is loaded in this session. Close Husk completely and open it again to reset its data."
-                           : "Deletes what the game saved and downloaded here: saves, settings and caches. The game itself stays.")
+                Text(inUse ? "The app is loaded in this session. Close APK Container completely and open it again to reset its data."
+                           : "Deletes what the app saved and downloaded here: saves, settings and caches. The app itself stays.")
             }
         }
         .huskForm()
@@ -283,14 +283,14 @@ struct TLAppSettingsView: View {
         .onDisappear { rename() }
         .task { dataSize = await Self.measure(dataDirs) }
         .confirmationDialog("Reset the data of \(app.label)?", isPresented: $confirmReset, titleVisibility: .visible) {
-            Button("Reset Game Data", role: .destructive) {
+            Button("Reset App Data", role: .destructive) {
                 for dir in dataDirs { try? FileManager.default.removeItem(at: dir) }
                 HuskLog.log("tl", "reset the data of \(app.label)")
                 Task { dataSize = await Self.measure(dataDirs) }
             }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("Saves, settings and caches the game made here are deleted.")
+            Text("Saves, settings and caches the app made here are deleted.")
         }
     }
 
@@ -329,5 +329,41 @@ struct TLAppSettingsView: View {
             }
             return bytes == 0 ? "nothing" : ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
         }.value
+    }
+}
+
+/// Default render density for apps that have not chosen an override. The rendering view resolves the actual screen at launch.
+struct DisplayDefaultsSettingsView: View {
+    @AppStorage(APKDisplayResolution.defaultsKey) private var storedPreset = APKDisplayResolution.Preset.native.rawValue
+
+    private var selection: Binding<APKDisplayResolution.Preset> {
+        Binding(get: { APKDisplayResolution.defaultPreset }, set: { storedPreset = $0.rawValue })
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                Picker("Default Resolution", selection: selection) {
+                    ForEach(APKDisplayResolution.defaultChoices) { Text($0.title).tag($0) }
+                }
+                DetailRow(label: "Device pixels",
+                          value: "\(Int(UIScreen.main.nativeBounds.width)) × \(Int(UIScreen.main.nativeBounds.height))")
+            } header: {
+                Text("Android App Display")
+            } footer: {
+                Text("\(APKDisplayResolution.defaultPreset.detail) The app uses the real iPhone or iPad display shape. "
+                   + "A smaller pixel budget can reduce GPU and memory use; performance depends on the app and device.")
+            }
+            Section {
+                Text("Open an app's settings to choose its orientation, a different resolution, or a custom longest-edge limit from 320 to 4096 pixels. "
+                   + "The other edge is calculated automatically to keep the image in proportion.")
+                Text("Resolution changes apply when the app next starts. If it is already loaded, close APK Container completely and reopen it. "
+                   + "Apps with a fixed rendering surface keep their original proportions when a window is resized.")
+            } header: {
+                Text("Per-App Settings")
+            }
+        }
+        .huskForm()
+        .navigationTitle("Display & Resolution")
     }
 }

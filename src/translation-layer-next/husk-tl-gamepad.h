@@ -43,8 +43,7 @@ void tl_pad_connect(int slot, const char *name);
 void tl_pad_disconnect(int slot);
 void tl_pad_update(int slot, const tl_pad_state *state);        /* any thread; unchanged state sends nothing */
 bool tl_pad_connected(int slot);
-/* The last state reported for slot; false when no controller is connected there. A console module reads the pads this way
- * (husk-console-host.c) instead of through a sink. */
+/* The last state reported for slot; false when no controller is connected there. */
 bool tl_pad_read(int slot, tl_pad_state *out);
 
 /* the objects in husk-tl-jni-input.c */

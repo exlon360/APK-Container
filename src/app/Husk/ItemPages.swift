@@ -358,91 +358,6 @@ struct GamePage: View {
     }
 }
 
-// MARK: - a PS4 game
-
-/// A PS4 game from Documents/PS4 Games: Play, and what it is. Run by the PS4 layer (libhuskps4.dylib) on Husk's JIT.
-struct PS4GamePage: View {
-    let game: PS4Game
-    @ObservedObject private var jit = JITCoordinator.shared
-    @State private var playing = false
-    @State private var confirmQuit = false
-
-    private var item: LibraryItem { .ps4(game) }
-
-    /// Another game already loaded in this run of Husk (an Android game's engine, or another PS4 game).
-    private var blockedBy: String? {
-        if Router.shared.androidStarted { return "Android" }   // QEMU holds the JIT region the PS4 layer needs
-        guard let loaded = husk_native_loaded_apk().map({ String(cString: $0) }), loaded != game.libraryID else { return nil }
-        if loaded.hasPrefix("ps4:") { return PS4Store.shared.game(String(loaded.dropFirst(4)))?.title ?? "Another game" }
-        return TranslationLayerStore.shared.apps.first { $0.apks.first == loaded }?.label ?? "Another game"
-    }
-
-    private var subtitle: String {
-        if let used = item.usedText { return used }
-        return "PlayStation 4" + (game.version.map { " · v\($0)" } ?? "")
-    }
-
-    var body: some View {
-        List {
-            PageHero(item: item, subtitle: subtitle) { primary }
-                .heroRow()
-            if !PS4Store.available {
-                Section {
-                    Text(PS4Store.moduleURL == nil
-                         ? "This build of Husk does not include the PS4 layer."
-                         : "PS4 games need iOS 17.4 or later.")
-                        .foregroundStyle(.secondary)
-                }
-            }
-            Section("About") {
-                LabeledContent("Runs With", value: "Husk's PS4 layer")
-                LabeledContent("Title ID", value: game.titleID)
-                if let v = game.version { LabeledContent("Version", value: v) }
-                LabeledContent("Last Played", value: game.lastPlayed.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "Never")
-                LabeledContent("Folder", value: "PS4 Games/" + game.folder.lastPathComponent)
-            }
-        }
-        .listStyle(.insetGrouped)
-        .navigationTitle(game.title)
-        .navigationBarTitleDisplayMode(.inline)
-        .fullScreenCover(isPresented: $playing) { PS4PlayView(game: game) }
-        .confirmationDialog("Close Husk?", isPresented: $confirmQuit, titleVisibility: .visible) {
-            Button("Close Husk") {
-                Router.shared.switchTo(game.libraryID)
-                CrashReport.gameEnded()
-                HuskLog.flushNow()
-                exit(0)
-            }
-        } message: {
-            Text("\(blockedBy ?? "The other game") is still loaded and only one game can run per session. Husk closes; open it again and \(game.title) starts by itself.")
-        }
-        .id(jit.attachGeneration)
-        .onAppear {
-            guard Router.shared.autoPlay == game.libraryID, Launcher.jitOn, blockedBy == nil, PS4Store.available else { return }
-            Router.shared.autoPlay = nil
-            playing = true
-        }
-    }
-
-    @ViewBuilder
-    private var primary: some View {
-        if !PS4Store.available {
-            BigButton(title: "Can't Play Here", systemImage: "xmark.octagon", prominent: false) { }.disabled(true)
-        } else if blockedBy != nil {
-            BigButton(title: "Close Husk to Play", systemImage: "xmark.circle", prominent: false) { confirmQuit = true }
-        } else if !Launcher.jitOn {
-            if jit.busy {
-                HStack(spacing: 10) { ProgressView(); Text(jit.status ?? "Turning on JIT…").foregroundStyle(.secondary) }
-                    .frame(maxWidth: .infinity).frame(height: 50)
-            } else {
-                BigButton(title: "Turn On JIT to Play", systemImage: "bolt.fill", action: turnOnJIT)
-            }
-        } else {
-            BigButton(title: "Play", systemImage: "play.fill") { playing = true }
-        }
-    }
-}
-
 // MARK: - an app inside Android
 
 /// An app installed in Android: Open (starting Android first when it is not running), what it is, and its files.
@@ -536,12 +451,12 @@ struct AndroidAppPage: View {
             }
         } else if guest.state == .ready {
             BigButton(title: Launcher.jitOn ? "Start Android and Open" : "Turn On JIT", systemImage: Launcher.jitOn ? "play.fill" : "bolt.fill") {
-                if Launcher.jitOn { router.pendingAndroidLaunch = app.name }
+                router.pendingAndroidLaunch = app.name
                 router.startAndroid()
             }
         } else {
-            HuskLink(value: LibraryRoute.androidSystem) {
-                Label("Get Android First", systemImage: "arrow.down.circle")
+            NavigationLink { AndroidRuntimeSettings() } label: {
+                Label("Set Up Compatibility Runtime", systemImage: "arrow.down.circle")
                     .font(.system(.headline, design: .rounded))
                     .frame(maxWidth: .infinity).frame(height: 50)
                     .foregroundStyle(.white)
@@ -553,84 +468,74 @@ struct AndroidAppPage: View {
 
     /// Android's own page for the app: permissions, storage, force stop.
     private func appInfo() {
-        let pkg = app.name
-        DispatchQueue.global(qos: .userInitiated).async {
-            _ = try? GuestBridge.shared.shell("am start -a android.settings.APPLICATION_DETAILS_SETTINGS -d package:\(pkg)", timeout: 30)
-        }
-        router.openGuest()
+        host.openAppInfo(app.name) { router.openGuest() }
     }
 }
 
-// MARK: - Android itself
+// MARK: - compatibility runtime setup
 
-/// The whole Android system, as an app of its own: get it, start it, open it, and its settings.
-struct AndroidSystemPage: View {
+/// Downloads and maintains the Android runtime used by apps that need full emulation.
+/// The runtime stays behind the native library; it is never offered as a desktop to launch.
+struct AndroidRuntimeSettings: View {
     @ObservedObject private var guest = GuestImage.shared
     @ObservedObject private var runner = QemuRunner.shared
     @ObservedObject private var host = AndroidHost.shared
     @ObservedObject private var router = Router.shared
-    @ObservedObject private var jit = JITCoordinator.shared
 
     private var running: Bool { router.androidStarted }
 
     var body: some View {
         List {
             Section {
-                PageHero(item: .android, subtitle: status) {
-                    VStack(spacing: 10) {
-                        primary
-                        if let progress { ProgressView(value: progress) }
-                    }
-                }
+                LabeledContent("Status", value: status)
+                if let progress { ProgressView(value: progress) }
+                downloadAction
             } footer: {
                 if let note { Text(note) }
             }
-            .heroRow()
 
             if host.isReady {
                 Section {
-                    Button { router.openFiles(at: FilesTab.root) } label: { Label("Files", systemImage: "folder") }
-                    Button { runner.saveState(reason: "asked from the Android page") } label: {
-                        Label(runner.isSavingState ? "Saving…" : "Save Android Now", systemImage: "externaldrive.badge.checkmark")
+                    Button { runner.saveState(reason: "asked from compatibility runtime settings") } label: {
+                        Label(runner.isSavingState ? "Saving…" : "Save Runtime State", systemImage: "externaldrive.badge.checkmark")
                     }
                     .disabled(runner.isSavingState)
                 } footer: {
-                    Text("Saving keeps Android exactly as it is, so the next start skips booting.")
+                    Text("Saving keeps installed apps and their state ready for the next session.")
                 }
             }
 
-            Section("Settings") {
+            Section("Runtime Settings") {
                 NavigationLink { PerformanceSettings() } label: { Label("Performance", systemImage: "speedometer") }
-                NavigationLink { InputSettings() } label: { Label("Input", systemImage: "hand.tap") }
+                NavigationLink { InputSettings() } label: { Label("Display & Input", systemImage: "hand.tap") }
                 NavigationLink { NetworkSettings() } label: { Label("Network", systemImage: "globe") }
                 NavigationLink { SavedMachineSettings() } label: { Label("Saved Machine", systemImage: "externaldrive") }
             }
 
             Section {
-                Text("Android runs fully emulated, so it is slower than games on the translation layer. Use it for apps "
-                   + "Husk cannot run directly, like Termux or app stores.")
+                Text("Use this optional runtime for APKs that cannot run directly. Full Android emulation uses more resources and may be slower. Open installed apps from Apps.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
         }
         .listStyle(.insetGrouped)
-        .navigationTitle("Android")
+        .navigationTitle("Compatibility Runtime")
         .navigationBarTitleDisplayMode(.inline)
         .animation(.easeInOut(duration: 0.2), value: status)
     }
 
     private var status: String {
         if running {
-            if host.isReady { return "Running" }
+            if host.isReady { return "Ready for apps" }
             return runner.setupMessage ?? (runner.bootProgress > 0 ? "Starting · \(runner.bootProgress)%" : "Starting…")
         }
         switch guest.state {
-        case .missing: return "Not downloaded yet"
+        case .missing: return "Not downloaded"
         case .downloading(_, let received, let total):
             return "Downloading · \(bytes(received)) of \(total > 0 ? bytes(total) : "…")"
         case .installing: return "Installing…"
-        case .failed: return "Something went wrong"
-        case .ready: return Launcher.jitOn ? "Ready to start" : "Needs JIT to start"
+        case .failed: return "Download failed"
+        case .ready: return "Installed"
         }
     }
 
@@ -643,50 +548,33 @@ struct AndroidSystemPage: View {
     private var note: String? {
         guard !running else { return nil }
         switch guest.state {
-        case .missing: return "Husk's Android runtime is about 760 MB. Android itself follows once it is installed."
+        case .missing: return "The compatibility runtime is about 760 MB. Android components download during its first start."
         case .failed(let message): return message
+        case .ready: return "Choose an APK in Apps to start the runtime and open that app."
         default: return nil
         }
     }
 
     @ViewBuilder
-    private var primary: some View {
-        if running {
-            if host.isReady {
-                BigButton(title: "Open Android", systemImage: "play.fill") { open() }
-            } else {
-                BigButton(title: "Watch It Start", systemImage: "eye", prominent: false) { open() }
-            }
-        } else {
+    private var downloadAction: some View {
+        if !running {
             switch guest.state {
             case .missing:
-                BigButton(title: "Download Android", systemImage: "arrow.down.circle") {
-                    // Claim the JIT region before the download: it takes a while, and StikDebug lets go by the end of it.
+                Button {
                     JITBootstrap.prewarm()
                     guest.download()
-                }
+                } label: { Label("Download Runtime", systemImage: "arrow.down.circle") }
             case .downloading:
-                BigButton(title: "Cancel Download", systemImage: "xmark", prominent: false) { guest.cancel() }
-            case .installing:
-                ProgressView().frame(height: 50)
+                Button("Cancel Download", role: .cancel) { guest.cancel() }
             case .failed:
-                BigButton(title: "Try Again", systemImage: "arrow.clockwise") { JITBootstrap.prewarm(); guest.download() }
-            case .ready:
-                if jit.busy {
-                    HStack(spacing: 10) { ProgressView(); Text(jit.status ?? "Turning on JIT…").foregroundStyle(.secondary) }
-                        .frame(maxWidth: .infinity).frame(height: 50)
-                } else {
-                    BigButton(title: Launcher.jitOn ? "Start Android" : "Turn On JIT", systemImage: Launcher.jitOn ? "power" : "bolt.fill") {
-                        router.startAndroid()
-                    }
-                }
+                Button {
+                    JITBootstrap.prewarm()
+                    guest.download()
+                } label: { Label("Try Again", systemImage: "arrow.clockwise") }
+            case .installing, .ready:
+                EmptyView()
             }
         }
-    }
-
-    private func open() {
-        UserDefaults.standard.set(Date(), forKey: "husk.android.lastOpened")
-        router.openGuest()
     }
 
     private func bytes(_ n: Int64) -> String { ByteCountFormatter.string(fromByteCount: n, countStyle: .file) }
