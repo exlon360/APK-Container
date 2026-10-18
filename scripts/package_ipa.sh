@@ -60,10 +60,10 @@ else
     echo "==> xcodegen not installed; using the checked-in project as-is" >&2
 fi
 
-SHADER_ARGS=()
+SHADER_EXCLUSION=""
 if [ "${APK_CONTAINER_PREBUILT_SHADERS:-NO}" = YES ]; then
     [ -n "${APK_CONTAINER_RUNTIME_ASSETS:-}" ] || { echo "prebuilt shaders require verified runtime assets" >&2; exit 1; }
-    SHADER_ARGS+=("EXCLUDED_SOURCE_FILE_NAMES=Shaders.metal")
+    SHADER_EXCLUSION="Shaders.metal"
 fi
 
 echo "==> building"
@@ -71,7 +71,7 @@ xcodebuild -project "$HUSK_ROOT/src/app/Husk.xcodeproj" -scheme Husk \
     -sdk iphoneos -configuration Release -derivedDataPath "$DD" \
     CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
     APK_CONTAINER_RUNTIME_ASSETS="${APK_CONTAINER_RUNTIME_ASSETS:-}" \
-    APK_CONTAINER_PREBUILT_SHADERS="${APK_CONTAINER_PREBUILT_SHADERS:-NO}" "${SHADER_ARGS[@]}" \
+    APK_CONTAINER_PREBUILT_SHADERS="${APK_CONTAINER_PREBUILT_SHADERS:-NO}" EXCLUDED_SOURCE_FILE_NAMES="$SHADER_EXCLUSION" \
     build 2>&1 | tee "$DD/build.log" | grep -E "error:|BUILD (SUCCEEDED|FAILED)" || true
 
 # A failed build used to sail straight past this: the previous .app is still in
@@ -234,9 +234,11 @@ fi
 TMP_OUT="$STAGE/package.tmp"
 ( cd "$STAGE" && zip -qry "$TMP_OUT" Payload )
 
-VERIFY_ARGS=()
-[ "$TROLLSTORE" != true ] || VERIFY_ARGS+=(--trollstore)
-python3 "$HUSK_ROOT/tests/verify_package.py" "$TMP_OUT" "${VERIFY_ARGS[@]}"
+if [ "$TROLLSTORE" = true ]; then
+    python3 "$HUSK_ROOT/tests/verify_package.py" "$TMP_OUT" --trollstore
+else
+    python3 "$HUSK_ROOT/tests/verify_package.py" "$TMP_OUT"
+fi
 
 # Atomic replace so a half-written IPA never sits where the good one was.
 mv -f "$TMP_OUT" "$OUT"
