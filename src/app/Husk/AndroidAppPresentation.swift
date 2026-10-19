@@ -91,14 +91,14 @@ enum AndroidAppPresentation {
     enum MonitorEvent {
         case visible(Observation)
         case covered(Observation)
-        case returnedHome(Observation)
-        case timedOut(Observation)
+        case homeBlocked(Observation)
+        case unavailable(Observation)
     }
 
     // Neither subcommand includes the cached LAST ANR section of the unrestricted window dump.
     // The first reports current display focus; the second verifies the owning package, including SystemUI.
-    static let focusCommand = "dumpsys window displays | grep -E "
-        + "\"^WINDOW MANAGER DISPLAY CONTENTS|Display: mDisplayId=|^[[:space:]]*mCurrentFocus=|^[[:space:]]*mFocusedApp=|NO DISPLAY|Can't find service|Permission Denial|Exception|Error\""
+    // Includes InsetsState so the host can exclude Android's status/navigation areas.
+    static let focusCommand = "dumpsys window displays"
     static let ownershipCommand = "dumpsys window visible | grep -E "
         + "\"^WINDOW MANAGER WINDOWS|^[[:space:]]*Window #[0-9]+|^[[:space:]]*mDisplayId=|^[[:space:]]*mOwnerUid=|Can't find service|Permission Denial|Exception|Error\""
 
@@ -181,15 +181,43 @@ enum AndroidAppPresentation {
     final class Probe {
         private var windowID: String?
         private var ownershipReport: String?
+        private let validateDisplay: ((String) -> Bool)?
+        private let policyEpoch: AndroidPolicyEpochGuard?
+        private let restorePolicy: (() throws -> Void)?
+
+        init(validateDisplay: ((String) -> Bool)? = nil,
+             policyEpoch: AndroidPolicyEpochGuard? = nil, restorePolicy: (() throws -> Void)? = nil) {
+            self.validateDisplay = validateDisplay
+            self.policyEpoch = policyEpoch
+            self.restorePolicy = restorePolicy
+        }
 
         private func clear() { windowID = nil; ownershipReport = nil }
 
         func observe(run: RunCommand) throws -> Observation {
             do {
-                let focus = try execute(focusCommand, timeout: 15, run: run)
+                // A preceding probe already returned covered before scheduling this work.
+                // The fresh dump below must pass the new epoch and insets checks afterwards.
+                if let policyEpoch, policyEpoch.needsPreparation {
+                    clear()
+                    guard let restorePolicy else {
+                        return Observation(state: .readFailure, diagnostic: "Waiting to restore Android app-only controls.")
+                    }
+                    try restorePolicy()
+                }
+                let command = policyEpoch == nil ? focusCommand : AndroidPolicyEpochGuard.focusCommand
+                let focus = try execute(command, timeout: 15, run: run)
                 guard focus.status == 0 else {
                     clear()
                     return Observation(state: .readFailure, diagnostic: String(diagnostic(focus).prefix(700)))
+                }
+                if let policyEpoch, !policyEpoch.accepts(focus.out) {
+                    clear()
+                    return Observation(state: .readFailure, diagnostic: "Android restarted; restoring app-only controls before showing the app.")
+                }
+                if let validateDisplay, !validateDisplay(focus.out) {
+                    clear()
+                    return Observation(state: .unrecognized, diagnostic: "Waiting for valid Android display bounds and system-bar insets.")
                 }
                 guard let id = focusedWindowID(focus.out) else {
                     clear()
@@ -245,6 +273,8 @@ enum AndroidAppPresentation {
         var unknownSince: TimeInterval? = now()
         var homeSince: TimeInterval?
         var homeSamples = 0
+        var homeReported = false
+        var unavailableReported = false
         while true {
             if cancelled() { throw CancellationError() }
             let observation: Observation
@@ -269,31 +299,34 @@ enum AndroidAppPresentation {
                 unknownSince = nil
                 homeSince = nil
                 homeSamples = 0
+                homeReported = false
+                unavailableReported = false
                 await event(.visible(observation))
             } else {
-                // Cover immediately, but keep the same app session across transient HOME/null
-                // windows during activity changes. Ending a session needs sustained HOME evidence.
+                // HOME, crashes and service outages never navigate out of an APK session.
+                // Keep unsafe pixels covered and allow explicit retry/exit from native controls.
                 await event(.covered(observation))
                 if home && targetHasPresented {
                     if homeSince == nil { homeSince = now() }
                     homeSamples += 1
-                    if homeSamples >= 2, now() - (homeSince ?? now()) >= 3 {
-                        await event(.returnedHome(observation))
-                        return
+                    if !homeReported, homeSamples >= 2, now() - (homeSince ?? now()) >= 3 {
+                        homeReported = true
+                        await event(.homeBlocked(observation))
                     }
                 } else {
                     homeSince = nil
                     homeSamples = 0
+                    homeReported = false
                 }
                 if unknownSince == nil { unknownSince = now() }
-                if now() - (unknownSince ?? now()) >= 30 {
-                    await event(.timedOut(observation))
-                    return
+                if !unavailableReported, now() - (unknownSince ?? now()) >= 30 {
+                    unavailableReported = true
+                    await event(.unavailable(observation))
                 }
             }
             if cancelled() { throw CancellationError() }
             // Recovery must not hammer two full window dumps at 2.5 Hz on an emulated CPU.
-            try await pause(1)
+            try await pause(unavailableReported ? 3 : 1)
         }
     }
 
@@ -343,7 +376,8 @@ enum AndroidAppPresentation {
     /// A package/activity service can disappear during an Android framework restart even after boot_completed=1.
     static func start(package: String, settings: Bool, run: RunCommand,
                       cancelled: () -> Bool, pause: () async throws -> Void,
-                      log: (String) -> Void) async throws -> Session {
+                      log: (String) -> Void,
+                      prepare: ((Session) throws -> Session)? = nil) async throws -> Session {
         func checkCancellation() throws { if cancelled() { throw CancellationError() } }
         guard validPackage(package), !knownLaunchers.contains(package) else {
             throw LaunchError.message("Choose an Android app from Apps to open it.")
@@ -381,6 +415,8 @@ enum AndroidAppPresentation {
                 guard !homes.homePackages.contains(package) else {
                     throw LaunchError.message("Android home apps are hidden. Choose an APK from Apps instead.")
                 }
+                if let prepare { homes = try prepare(homes) }
+                try checkCancellation()
                 let command: String
                 if settings {
                     command = "am start -W --user 0 -a android.settings.APPLICATION_DETAILS_SETTINGS -d package:\(package)"

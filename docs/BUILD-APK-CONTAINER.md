@@ -48,7 +48,8 @@ Verify on an actual iPhone/iPad:
 - APK import and launch, portrait/landscape layouts, native resolution, lower presets, and custom limits.
 - Touch and keyboard alignment, releases outside a letterboxed image, window resizing, and returning to fullscreen.
 - Runtime display presets, Android density readback, and migration of old Device Maximum/50% selections on portrait and landscape windows. Check that a custom size remains custom and display changes take effect on the next boot.
-- Runtime setup, app launch/exit, app permission screens, lockscreen/System UI interactions, rotation and transient focus recovery without flashing the Apps library. Sustained Home focus should return to the library; transient Home should not. Polling can briefly expose the Android launcher after an app exits.
+- Runtime setup, app launch/exit, app permission and file-picker screens, lockscreen interactions, rotation and transient focus recovery. Home requests, missing windows, and Android service restarts must keep the session open. Verify disabled launcher packages, restricted Home/Recents shortcuts, and hidden system-bar pixels with aligned touch input in both GPU and software modes.
+- Three-finger app controls, explicit Return to Apps, App Files, keyboard controls, and floating-window arrangement. Test background/foreground without an automatic return to the library. Confirm an Android framework restart revalidates app-only restrictions before showing the app again.
 
 No device performance improvement or universal APK compatibility is established by the build alone.
 
@@ -64,11 +65,17 @@ sh tests/display-resolution/run.sh
 sh tests/runtime-display/run.sh
 sh tests/runtime-density/run.sh
 sh tests/android-presentation/run.sh
+sh tests/android-app-only/run.sh
+sh tests/android-policy-epoch/run.sh
+sh tests/android-system-bars/run.sh
+sh tests/guest-keyboard/run.sh
 sh tests/runtime-snapshot/run.sh
 git diff --check
 ```
 
-They cover phone and iPad sizes, rotation, legacy presets, custom limits, pixel-density consistency and readback, aspect-fit input mapping, direct app entry resolution without a HOME app, cached focus ownership, transient and sustained Home, service restart recovery, cancellation, and runtime snapshot compatibility. Android command responses are mocked; these checks do not exercise UIKit or Android engines. The upstream translation-layer harness remains under `tools/regress/` and requires its own APK fixtures and reference images.
+They cover phone and iPad sizes, rotation, legacy presets, custom limits, pixel-density consistency and readback, cropped/aspect-fit input mapping, direct app entry resolution without a HOME app, durable policy restoration records, cached focus ownership, retained sessions during transient and sustained Home, verified policy recovery after a framework restart, cancellation, guest keyboard routing, and runtime snapshot compatibility. The system-bar suite also renders Metal textures and compares pixels with the touch transform. Android command responses are mocked; these checks do not exercise UIKit or Android engines. The upstream translation-layer harness remains under `tools/regress/` and requires its own APK fixtures and reference images.
+
+Before changing guest launcher or status-bar policy, the runtime writes and reads back a private restore journal under its application-support `app-only-restore` directory, keyed to the guest disk. It retains original package states and explicit restoration commands. It never automatically restores older state or deletes installed app data. Keep that journal with a complete device backup when replacing or moving the app container.
 
 ## Building the runtime from source
 

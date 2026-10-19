@@ -891,10 +891,12 @@ final class AndroidHost: ObservableObject {
     /// Survives a temporary focus gap while the guest surface is covered.
     @Published private(set) var presentationActive = false
     @Published private(set) var foregroundPackage: String?
+    @Published private(set) var presentationRecovery: String?
     private var presentationTask: Task<Void, Never>?
     private var presentationID = UUID()
     private var presentationOpening = false
     private var lastPresentationDiagnostic: String?
+    private var activePresentation: (package: String, settings: Bool, then: () -> Void)?
     /// What just finished. Progress lives in `busy`; this is the sentence after.
     @Published var toast: Toast?
 
@@ -1755,9 +1757,21 @@ final class AndroidHost: ObservableObject {
         appSurfaceAllowed = false
         presentationActive = false
         foregroundPackage = nil
-        if presentationOpening { busy = nil }
+        if presentationOpening, busy == "Opening…" { busy = nil }
         presentationOpening = false
         lastPresentationDiagnostic = nil
+        presentationRecovery = nil
+        activePresentation = nil
+    }
+
+    func retryAppPresentation() {
+        guard let activePresentation else { return }
+        guard busy == nil || busy == "Opening…" else {
+            presentationRecovery = "Wait for the current Android operation to finish, then retry this app."
+            return
+        }
+        presentApp(activePresentation.package, settings: activePresentation.settings,
+                   then: activePresentation.then)
     }
 
     func launch(_ pkg: String, then: @escaping () -> Void) {
@@ -1773,25 +1787,79 @@ final class AndroidHost: ObservableObject {
             say("Could not open app", "The compatibility runtime is not ready or the package name is invalid.", good: false)
             return
         }
-        endAppPresentation()
+        // Replacing/retrying a request does not briefly navigate through the library.
+        presentationID = UUID()
+        presentationTask?.cancel()
+        appSurfaceAllowed = false
+        foregroundPackage = nil
+        presentationRecovery = nil
+        lastPresentationDiagnostic = nil
+        activePresentation = (pkg, settings, then)
         let request = presentationID
         presentationActive = true
         presentationOpening = true
         busy = "Opening…"
         let installed = Set(packages.map(\.name))
+        let guestPath = GuestImage.shared.userdataPath
+        let journalDirectory = Self.support.appendingPathComponent("app-only-restore", isDirectory: true)
+        AndroidSystemBars.shared.reset()
         presentationTask = Task.detached(priority: .userInitiated) { [weak self] in
             do {
+                try Task.checkCancellation()
+                let journal = try AndroidPolicyRestoreJournal(directory: journalDirectory, guestPath: guestPath)
+                let policyEpoch = AndroidPolicyEpochGuard()
+                let runChecked: AndroidAppPresentation.RunCommand = { command, timeout in
+                    try Task.checkCancellation()
+                    let result = try GuestBridge.shared.run(command, timeout: timeout)
+                    try Task.checkCancellation()
+                    return result
+                }
+                let applyPolicy: () throws -> AndroidAppOnlyPolicy.Report = {
+                    try policyEpoch.prepare(readEpoch: {
+                        let result = try AndroidAppPresentation.execute(AndroidPolicyEpochGuard.epochCommand,
+                            timeout: 10, run: runChecked)
+                        return result.status == 0 ? AndroidPolicyEpochGuard.epoch(result.out) : nil
+                    }, apply: {
+                        try AndroidAppOnlyPolicy.prepare(requested: pkg,
+                            run: { try AndroidAppPresentation.execute($0, timeout: $1, run: runChecked) },
+                            saveOriginal: { package, state in
+                                try Task.checkCancellation()
+                                try journal.saveOriginal(package: package, state: state)
+                            },
+                            saveChromeOriginal: { snapshot in
+                                try Task.checkCancellation()
+                                try journal.saveChromeOriginal(snapshot)
+                            },
+                            log: { HuskLog.log("app-only", $0) })
+                    })
+                }
                 let session = try await AndroidAppPresentation.start(
                     package: pkg, settings: settings,
-                    run: { try GuestBridge.shared.run($0, timeout: $1) },
+                    run: runChecked,
                     cancelled: { Task.isCancelled },
                     pause: { try await Task.sleep(nanoseconds: 2_000_000_000) },
-                    log: { HuskLog.log("bridge", $0) })
-                let probe = AndroidAppPresentation.Probe()
+                    log: { HuskLog.log("bridge", $0) },
+                    prepare: { prior in
+                        do {
+                            let report = try applyPolicy()
+                            return .init(homePackages: prior.homePackages.union(report.homePackages), homesVerified: true)
+                        } catch is CancellationError { throw CancellationError() }
+                        catch {
+                            throw AndroidAppPresentation.LaunchError.message("App-only setup could not finish: \(error.localizedDescription)")
+                        }
+                    })
+                let probe = AndroidAppPresentation.Probe(validateDisplay: {
+                    AndroidSystemBars.shared.update(fromDisplayDump: $0)
+                }, policyEpoch: policyEpoch, restorePolicy: {
+                    try Task.checkCancellation()
+                    AndroidSystemBars.shared.reset()
+                    _ = try applyPolicy()
+                    HuskLog.log("app-only", "Restored controls after Android system service restarted.")
+                })
                 try await AndroidAppPresentation.monitor(
                     requested: pkg, session: session, installedPackages: installed,
                     allowSettings: settings,
-                    read: { try probe.observe(run: { try GuestBridge.shared.run($0, timeout: $1) }) },
+                    read: { try probe.observe(run: runChecked) },
                     now: { ProcessInfo.processInfo.systemUptime },
                     pause: { interval in try await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000)) },
                     cancelled: { Task.isCancelled },
@@ -1802,6 +1870,7 @@ final class AndroidHost: ObservableObject {
                             case .visible(let observation):
                                 let firstPresentation = self.presentationOpening
                                 self.presentationOpening = false
+                                self.presentationRecovery = nil
                                 self.foregroundPackage = observation.package
                                 self.appSurfaceAllowed = true
                                 let evidence = "showing: " + observation.diagnostic
@@ -1810,7 +1879,7 @@ final class AndroidHost: ObservableObject {
                                     HuskLog.log("focus", evidence)
                                 }
                                 if firstPresentation {
-                                    self.busy = nil
+                                    if self.busy == "Opening…" { self.busy = nil }
                                     if !settings { self.markLaunched(pkg) }
                                     then()
                                 }
@@ -1824,15 +1893,14 @@ final class AndroidHost: ObservableObject {
                                     self.lastPresentationDiagnostic = evidence
                                     HuskLog.log("focus", evidence)
                                 }
-                            case .returnedHome(let observation):
-                                HuskLog.log("focus", "returned to Apps: \(observation.diagnostic)")
-                                self.endAppPresentation()
-                            case .timedOut(let observation):
-                                HuskLog.log("focus", "foreground recovery timed out: \(observation.diagnostic)")
-                                self.endAppPresentation()
-                                self.say("Android app unavailable",
-                                         "Android accepted the launch but did not present an app window. "
-                                         + observation.reason, good: false)
+                            case .homeBlocked(let observation):
+                                HuskLog.log("focus", "Home blocked; retaining APK session: \(observation.diagnostic)")
+                                if self.busy == "Opening…" { self.busy = nil }
+                                self.presentationRecovery = "This app stopped showing a window. You can reopen it here."
+                            case .unavailable(let observation):
+                                HuskLog.log("focus", "Waiting for APK recovery: \(observation.diagnostic)")
+                                if self.busy == "Opening…" { self.busy = nil }
+                                self.presentationRecovery = "Android is still recovering this app. You can wait or try opening it again."
                             }
                         }
                     })
@@ -1840,9 +1908,11 @@ final class AndroidHost: ObservableObject {
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
                     guard let self, self.presentationID == request else { return }
-                    self.endAppPresentation()
+                    self.appSurfaceAllowed = false
+                    if self.busy == "Opening…" { self.busy = nil }
+                    self.presentationOpening = false
+                    self.presentationRecovery = error.localizedDescription
                     HuskLog.log("bridge", "App presentation failed: \(error.localizedDescription)")
-                    self.say("App closed or unavailable", error.localizedDescription, good: false)
                 }
             }
         }

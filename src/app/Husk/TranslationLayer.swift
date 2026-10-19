@@ -768,28 +768,23 @@ struct TLClassicAttemptView: View {
     let app: TLApp
     @StateObject private var runner = TLAttemptRunner()
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("husk.tl.showLog") private var showLogSetting = false
     @AppStorage(TranslationLayer.devInfoKey) private var devInfo = false
     @State private var settings: TLAppSettings
     @State private var uiHidden: Bool
     @State private var hint = false
-    private let cleanLayout: Bool
-    private var showLog: Bool { get { showLogSetting && devInfo } nonmutating set { showLogSetting = newValue } }
 
     init(app: TLApp) {
         self.app = app
         let loaded = TLAppSettings.load(app.id)
         _settings = State(initialValue: loaded)
-        _uiHidden = State(initialValue: loaded.cleanView)
-        cleanLayout = loaded.cleanView
+        _uiHidden = State(initialValue: true)
     }
 
     /// These games draw a portrait picture (Flappy Bird's is 540 x 960), unless the game's settings say otherwise.
     private var portrait: Bool { settings.orientation != .landscape }
 
     private func toggleInterface() {
-        withAnimation(.easeInOut(duration: 0.15)) { uiHidden.toggle() }
-        if uiHidden { showHint() }
+        uiHidden = false
     }
 
     private func showHint() {
@@ -801,11 +796,8 @@ struct TLClassicAttemptView: View {
         ZStack {
             Color.black.ignoresSafeArea()
             VStack(spacing: 0) {
-                if !cleanLayout {
-                    bar.opacity(uiHidden ? 0 : 1).allowsHitTesting(!uiHidden)
-                }
                 ZStack {
-                    TLScreenView(showsStats: settings.showStats && !uiHidden, onThreeFingerTap: { toggleInterface() })
+                    TLScreenView(showsStats: false, onThreeFingerTap: { toggleInterface() })
                     if !runner.isRunning, runner.frameCount == 0 {
                         VStack(spacing: 10) {
                             if runner.isDone {
@@ -818,16 +810,12 @@ struct TLClassicAttemptView: View {
                         }
                     }
                 }
-                .ignoresSafeArea(.container, edges: cleanLayout ? .all : [.horizontal, .bottom])
-                if showLog, !uiHidden { logPanel.frame(height: 220) }
-            }
-            if cleanLayout, !uiHidden {
-                VStack(spacing: 0) { bar; Spacer() }
+                .ignoresSafeArea()
             }
             if hint {
                 VStack {
                     Spacer()
-                    Text("Tap with three fingers to show the interface")
+                    Text("Tap with three fingers for app controls")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 14).padding(.vertical, 8)
@@ -838,13 +826,21 @@ struct TLClassicAttemptView: View {
                 .transition(.opacity)
             }
         }
+        .accessibilityAction(named: Text("App Controls")) { toggleInterface() }
+        .sheet(isPresented: Binding(get: { !uiHidden }, set: { uiHidden = !$0 })) {
+            AppSessionControls(title: app.label, app: app, onReturn: { runner.stop(); dismiss() }) {
+                if devInfo {
+                    Section { NavigationLink("Runtime Log") { logPanel.navigationTitle("Runtime Log") } }
+                }
+            }
+        }
         .statusBarHidden(true)
         .huskHideSystemOverlays()
         .huskDefersSystemGestures(on: .all)
         .onAppear {
             HuskOrientation.set(portrait ? .portrait : .landscape)
             UIApplication.shared.isIdleTimerDisabled = settings.keepAwake
-            if cleanLayout { showHint() }
+            showHint()
             CrashReport.gameStarted(app)
             runner.start(apks: app.apks)
         }
@@ -854,32 +850,6 @@ struct TLClassicAttemptView: View {
             UIApplication.shared.isIdleTimerDisabled = false
             HuskOrientation.set(HuskOrientation.standard)
         }
-    }
-
-    private var bar: some View {
-        HStack(spacing: 12) {
-            Button { runner.stop(); dismiss() } label: {
-                Label("Close", systemImage: "xmark").font(.system(size: 13, weight: .semibold))
-            }
-            .tint(.white)
-            Circle().fill(runner.statusColor).frame(width: 7, height: 7)
-            Text(runner.isRunning ? app.label : runner.statusText)
-                .font(.system(size: 12, weight: .medium)).foregroundStyle(.white.opacity(0.85)).lineLimit(1)
-            Spacer()
-            if devInfo {
-                Button { withAnimation(.snappy(duration: 0.25)) { showLog.toggle() } } label: {
-                    Text(showLog ? "Hide log" : "Log").font(.system(size: 12, weight: .semibold))
-                }
-                .tint(.white)
-            }
-            Button { toggleInterface() } label: {
-                Label("Hide", systemImage: "eye.slash").font(.system(size: 12, weight: .semibold))
-            }
-            .tint(.white)
-        }
-        .padding(.horizontal, 14)
-        .frame(height: 30)
-        .background(Color(white: 0.08))
     }
 
     private var logPanel: some View {

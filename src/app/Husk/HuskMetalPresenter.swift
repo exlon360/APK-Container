@@ -80,7 +80,7 @@ final class HuskMetalPresenter {
 
         struct VOut { float4 pos [[position]]; float2 uv; };
 
-        struct Params { float flip; float rotate; float2 scale; };
+        struct Params { float flip; float rotate; float2 scale; float4 crop; };
 
         vertex VOut husk_vertex(uint vid [[vertex_id]],
                                 constant Params &p [[buffer(0)]]) {
@@ -93,19 +93,13 @@ final class HuskMetalPresenter {
             VOut o;
             o.pos = float4(corners[vid] * p.scale, 0, 1);
             float2 uv = corners[vid] * 0.5 + 0.5;
-            // Metal samples textures from the top-left; clip space counts y
-            // upward. That inversion is unconditional. The guest's own
-            // y_0_top then flips it back when the scanout is already top-down.
-            uv = float2(uv.x, flip > 0.5 ? uv.y : 1.0 - uv.y);
-            // A quarter turn, when the guest panel and the screen disagree.
-            //
-            // Android is a fixed 360x800 panel. Asked for landscape it rotates
-            // its own composition inside that panel rather than changing shape,
-            // so what arrives here is a portrait texture holding a sideways
-            // picture. Turning it back here is what makes it land upright on a
-            // landscape screen -- and doing it in the sampler costs nothing,
-            // because the GPU is reading the texture either way.
-            o.uv = p.rotate > 0.5 ? float2(1.0 - uv.y, uv.x) : uv;
+            uv.y = 1.0 - uv.y; // View coordinates start at the top left.
+            if (p.rotate > 0.5) uv = float2(1.0 - uv.y, uv.x);
+            // Crop in physical display coordinates, exactly as touch mapping
+            // does. A texture storage flip comes last, after the physical crop.
+            uv = p.crop.xy + uv * p.crop.zw;
+            if (flip > 0.5) uv.y = 1.0 - uv.y;
+            o.uv = uv;
             return o;
         }
 
@@ -168,28 +162,37 @@ final class HuskMetalPresenter {
               let encoder = buffer.makeRenderCommandEncoder(descriptor: pass) else { return }
 
         let frameRotated = rotated
-        // Letterbox rather than stretch. The guest occupies effW x effH on
-        // screen once any turn is applied; whichever axis runs out first sets
-        // the scale, and the other is inset.
-        let effW = Float(frameRotated ? texture.height : texture.width)
-        let effH = Float(frameRotated ? texture.width  : texture.height)
-        let layerW = Float(layer.drawableSize.width)
-        let layerH = Float(layer.drawableSize.height)
-        var sx: Float = 1, sy: Float = 1
-        if effW > 0, effH > 0, layerW > 0, layerH > 0 {
-            let guestAspect = effW / effH
-            let layerAspect = layerW / layerH
-            if guestAspect > layerAspect { sy = layerAspect / guestAspect }
-            else                         { sx = guestAspect / layerAspect }
+        let geometry = AndroidSystemBars.shared.crop(width: texture.width, height: texture.height).map {
+            RuntimeDisplayGeometry(width: Double(texture.width), height: Double(texture.height),
+                                   rotated: frameRotated, crop: $0)
         }
+        if let geometry {
+            // Letterbox rather than stretch. The guest occupies effW x effH on
+            // screen once any turn is applied; whichever axis runs out first sets
+            // the scale, and the other is inset.
+            let effW = Float(geometry.effectiveWidth)
+            let effH = Float(geometry.effectiveHeight)
+            let layerW = Float(layer.drawableSize.width)
+            let layerH = Float(layer.drawableSize.height)
+            var sx: Float = 1, sy: Float = 1
+            if effW > 0, effH > 0, layerW > 0, layerH > 0 {
+                let guestAspect = effW / effH
+                let layerAspect = layerW / layerH
+                if guestAspect > layerAspect { sy = layerAspect / guestAspect }
+                else                         { sx = guestAspect / layerAspect }
+            }
 
-        var params = (flip: Float(flip ? 1 : 0), rotate: Float(frameRotated ? 1 : 0),
-                      sx: sx, sy: sy)
-        encoder.setRenderPipelineState(pipeline)
-        encoder.setVertexBytes(&params, length: MemoryLayout<Float>.size * 4, index: 0)
-        encoder.setFragmentTexture(texture, index: 0)
-        encoder.setFragmentSamplerState(sampler, index: 0)
-        encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+            var params = (flip: Float(flip ? 1 : 0), rotate: Float(frameRotated ? 1 : 0),
+                          sx: sx, sy: sy, left: Float(geometry.crop.left), top: Float(geometry.crop.top),
+                          width: Float(geometry.crop.width), height: Float(geometry.crop.height))
+            encoder.setRenderPipelineState(pipeline)
+            encoder.setVertexBytes(&params, length: MemoryLayout<Float>.size * 8, index: 0)
+            encoder.setFragmentTexture(texture, index: 0)
+            encoder.setFragmentSamplerState(sampler, index: 0)
+            encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+        }
+        // Unknown or mismatched insets draw only the black clear, never a raw
+        // Android frame while the bridge obtains trustworthy geometry.
         encoder.endEncoding()
 
         // No manual retain of `texture`: a command buffer keeps every resource
@@ -198,8 +201,7 @@ final class HuskMetalPresenter {
         buffer.present(drawable)
         buffer.commit()
         geometryLock.lock()
-        lastGeometry = RuntimeDisplayGeometry(width: Double(texture.width),
-                                              height: Double(texture.height), rotated: frameRotated)
+        lastGeometry = geometry
         geometryLock.unlock()
 
         presented &+= 1

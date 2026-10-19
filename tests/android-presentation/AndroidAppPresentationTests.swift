@@ -58,10 +58,10 @@ struct AndroidAppPresentationTests {
             let stale = "com.wrong.package/.Desktop\nStatus: ok\n\(ready)\n"
             return (step.missingMarker ? stale : stale + marker + "\n" + step.output, step.status)
         }
-        func start(settings: Bool = false) async throws -> AP.Session {
+        func start(settings: Bool = false, prepare: ((AP.Session) throws -> AP.Session)? = nil) async throws -> AP.Session {
             try await AP.start(package: pkg, settings: settings, run: run,
                                cancelled: { self.cancelled }, pause: { self.pauses += 1 },
-                               log: { self.logs.append($0) })
+                               log: { self.logs.append($0) }, prepare: prepare)
         }
         func finished() { precondition(steps.isEmpty, "Unused mock commands: \(steps.map(\.command))") }
     }
@@ -163,49 +163,60 @@ struct AndroidAppPresentationTests {
         let oneShot = MockBridge([Step(AP.focusCommand, appReport.focus), Step(AP.ownershipCommand, appReport.owners)])
         let observed = try AP.observe(run: oneShot.run)
         precondition(observed.package == pkg); oneShot.finished()
+
+        // Insets must be verified on every dump, including an otherwise cached window owner.
+        var validDisplay = true
+        let validated = AP.Probe(validateDisplay: { _ in validDisplay })
+        let displayBridge = MockBridge([
+            Step(AP.focusCommand, appReport.focus), Step(AP.ownershipCommand, appReport.owners),
+            Step(AP.focusCommand, appReport.focus),
+            Step(AP.focusCommand, appReport.focus), Step(AP.ownershipCommand, appReport.owners),
+        ])
+        let initialDisplay = try validated.observe(run: displayBridge.run)
+        precondition(initialDisplay.package == pkg)
+        validDisplay = false
+        let invalidDisplay = try validated.observe(run: displayBridge.run)
+        precondition(invalidDisplay.state == .unrecognized)
+        validDisplay = true
+        let recoveredDisplay = try validated.observe(run: displayBridge.run)
+        precondition(recoveredDisplay.package == pkg)
+        displayBridge.finished()
     }
 
     final class Timeline {
-        var observations: [AP.Observation]
+        let observations: [AP.Observation]
         var time: TimeInterval = 0
         var events: [String] = []
         var visiblePackages: [String] = []
-        var coveredTimes: [TimeInterval] = []
         var readCount = 0
         var cancel = false
         var cancelOnCover = false
         var throwFirstRead = false
         var homesVerified = true
-        var transitions: [String] {
-            events.reduce(into: []) { result, event in
-                if result.last != event { result.append(event) }
-            }
-        }
+        var cancelledAtEnd = false
         init(_ observations: [AP.Observation]) { self.observations = observations }
         func run() async throws {
-            try await AP.monitor(requested: pkg, session: AP.Session(homePackages: ["com.example.home"], homesVerified: homesVerified),
-                                 installedPackages: [pkg, "com.example.browser", "com.example.home"], allowSettings: false,
-                                 read: {
-                self.readCount += 1
-                if self.throwFirstRead && self.readCount == 1 { throw NSError(domain: "bridge", code: 1) }
-                let value = self.observations.first!
-                if self.observations.count > 1 { self.observations.removeFirst() }
-                return value
-            }, now: { self.time }, pause: { self.time += $0 }, cancelled: { self.cancel }, event: { event in
-                switch event {
-                case .visible(let observation):
-                    self.events.append("visible")
-                    self.visiblePackages.append(observation.package!)
-                case .covered:
-                    self.events.append("covered")
-                    self.coveredTimes.append(self.time)
-                    if self.cancelOnCover { self.cancel = true }
-                case .returnedHome: self.events.append("home")
-                case .timedOut(let observation):
-                    precondition(!observation.diagnostic.isEmpty)
-                    self.events.append("timeout")
-                }
-            })
+            do {
+                try await AP.monitor(requested: pkg, session: .init(homePackages: ["com.example.home"], homesVerified: homesVerified),
+                    installedPackages: [pkg], allowSettings: false,
+                    read: {
+                        let index = self.readCount
+                        self.readCount += 1
+                        if self.throwFirstRead && index == 0 { throw NSError(domain: "bridge", code: 1) }
+                        return self.observations[index]
+                    }, now: { self.time }, pause: { self.time += $0 },
+                    cancelled: { self.cancel || self.readCount >= self.observations.count }, event: { event in
+                        switch event {
+                        case .visible(let observation): self.events.append("visible"); self.visiblePackages.append(observation.package!)
+                        case .covered: self.events.append("covered"); if self.cancelOnCover { self.cancel = true }
+                        case .homeBlocked: self.events.append("homeBlocked")
+                        case .unavailable: self.events.append("unavailable")
+                        }
+                    })
+                preconditionFailure("A session must never end itself")
+            } catch is CancellationError {
+                cancelledAtEnd = true
+            }
         }
     }
 
@@ -214,8 +225,7 @@ struct AndroidAppPresentationTests {
         let home = AP.observation(windowReport(owner: "com.example.home", title: "Home"))
         let unknown = AP.observation(windowReport(owner: pkg, focus: "null"))
         let locked = AP.observation(windowReport(owner: "com.android.systemui", title: "NotificationShade"))
-        precondition(app.package == pkg)
-        precondition(app.diagnostic.contains("mOwnerUid="))
+        precondition(app.package == pkg && app.diagnostic.contains("mOwnerUid="))
         precondition(locked.package == "com.android.systemui")
         precondition(AP.observation(windowReport(owner: pkg, windowDisplay: 1)).state == .unrecognized)
         precondition(AP.observation(windowReport(owner: pkg, focus: "Window{deadbeef u0 unrelated}")).state == .unrecognized)
@@ -229,116 +239,51 @@ struct AndroidAppPresentationTests {
         precondition(AP.observation(String(repeating: "bad response ", count: 1000)).diagnostic.count <= 700)
         try probeChecks()
 
-        // The tested monitor is the production loop. Initial HOME/null stays covered; only a
-        // sustained HOME after the requested app appears can end the native presentation session.
-        let initial = Timeline([home, unknown, app, home])
+        // A sentinel final observation lets cancellation occur only after all meaningful
+        // input was consumed; returning on HOME or timeout fails inside Timeline.run().
+        let sustained = Timeline([app] + Array(repeating: home, count: 45) + [app, app])
+        try await sustained.run()
+        precondition(sustained.cancelledAtEnd && sustained.visiblePackages == [pkg, pkg])
+        precondition(sustained.events.filter { $0 == "homeBlocked" }.count == 1)
+        precondition(sustained.events.filter { $0 == "unavailable" }.count == 1)
+        let outage = Timeline([app] + Array(repeating: unknown, count: 45) + [app, app])
+        try await outage.run()
+        precondition(outage.visiblePackages == [pkg, pkg] && outage.events.contains("unavailable"))
+        precondition(!outage.events.contains("homeBlocked"))
+        let transient = Timeline([app, home, home, unknown, app, app])
+        try await transient.run()
+        precondition(transient.visiblePackages == [pkg, pkg] && !transient.events.contains("homeBlocked"))
+        let initial = Timeline([home, unknown, locked, app, app])
         try await initial.run()
-        precondition(initial.transitions == ["covered", "visible", "covered", "home"])
-        precondition(initial.visiblePackages == [pkg])
-        let recovered = Timeline([app, unknown, app, home])
-        try await recovered.run()
-        precondition(recovered.transitions == ["visible", "covered", "visible", "covered", "home"])
-        let serviceRecovery = Timeline([app, home])
-        serviceRecovery.throwFirstRead = true
-        try await serviceRecovery.run()
-        precondition(serviceRecovery.transitions == ["covered", "visible", "covered", "home"])
-        let lockedRecovery = Timeline([app, locked, unknown, app, home])
-        try await lockedRecovery.run()
-        precondition(lockedRecovery.visiblePackages == [pkg, "com.android.systemui", pkg])
-        precondition(lockedRecovery.transitions == ["visible", "covered", "visible", "covered", "home"])
-        for observation in [unknown, AP.observation("unknown report")] {
-            let timeout = Timeline([observation])
-            try await timeout.run()
-            precondition(timeout.events.last == "timeout" && !timeout.events.contains("visible"))
-            precondition(timeout.time >= 30 && timeout.time < 31)
-        }
-        let recoveryTimeout = Timeline([app, unknown])
-        try await recoveryTimeout.run()
-        precondition(recoveryTimeout.events.first == "visible" && recoveryTimeout.events.last == "timeout")
-        precondition(recoveryTimeout.time >= 31 && recoveryTimeout.time < 32)
-        let cancelled = Timeline([unknown, app])
-        cancelled.cancelOnCover = true
-        do { try await cancelled.run(); preconditionFailure("Expected monitor cancellation") }
-        catch is CancellationError {} catch { preconditionFailure("Wrong monitor cancellation") }
+        precondition(initial.visiblePackages == ["com.android.systemui", pkg])
+        let failedRead = Timeline([unknown, app, app]); failedRead.throwFirstRead = true
+        try await failedRead.run()
+        precondition(failedRead.visiblePackages == [pkg])
+        let cancelled = Timeline([unknown, app]); cancelled.cancelOnCover = true
+        try await cancelled.run()
         precondition(cancelled.events == ["covered"] && cancelled.readCount == 1)
         for owner in ["com.android.settings", "android", "com.android.permissioncontroller", "com.android.systemui",
                       "org.lineageos.setupwizard", "com.vendor.nonCatalogActivity"] {
-            let dialog = AP.observation(windowReport(owner: owner, title: "Permission or error dialog"))
-            let handoff = Timeline([app, dialog, app, home])
+            let dialog = AP.observation(windowReport(owner: owner, title: "Permission or file window"))
+            let handoff = Timeline([app, unknown, dialog, unknown, app, app])
             try await handoff.run()
             precondition(handoff.visiblePackages == [pkg, owner, pkg])
-            precondition(handoff.transitions == ["visible", "covered", "home"])
+            precondition(!handoff.events.contains("homeBlocked") && !handoff.events.contains("unavailable"))
         }
         let uncataloged = AP.observation(windowReport(owner: "org.lineageos.setupwizard"))
-        let unverifiedHandoff = Timeline([app, uncataloged, app, home])
-        unverifiedHandoff.homesVerified = false
-        try await unverifiedHandoff.run()
-        precondition(unverifiedHandoff.visiblePackages == [pkg, pkg])
-        precondition(unverifiedHandoff.transitions == ["visible", "covered", "visible", "covered", "home"])
-        let initialHandoff = Timeline([uncataloged, app, home])
-        try await initialHandoff.run()
-        precondition(initialHandoff.visiblePackages == [pkg])
-        precondition(initialHandoff.events.first == "covered")
-
-        // Recorded device transitions lose focus for 1–3 seconds while opening permissions/settings.
-        // Multiple such changes recover in one session, without a terminal event in between.
-        let settings = AP.observation(windowReport(owner: "com.android.settings", title: "Settings"))
-        let activityChanges = Timeline([app, unknown, unknown, app, unknown, unknown, settings,
-                                        unknown, app, home])
-        try await activityChanges.run()
-        precondition(activityChanges.visiblePackages == [pkg, pkg, "com.android.settings", pkg])
-        precondition(activityChanges.events.filter { $0 == "home" || $0 == "timeout" } == ["home"])
-        // A slow but bounded activity transition also retains the session.
-        let slowTransition = Timeline([app] + Array(repeating: unknown, count: 25) + [app, home])
-        try await slowTransition.run()
-        precondition(slowTransition.visiblePackages == [pkg, pkg] && slowTransition.events.last == "home")
-
-        // Brief HOME flashes are covered immediately but do not discard the running app.
-        let transientHome = Timeline([app, home, home, app, home])
-        try await transientHome.run()
-        precondition(transientHome.visiblePackages == [pkg, pkg])
-        precondition(transientHome.coveredTimes.first == 1)
-        precondition(transientHome.time >= 7 && transientHome.time < 8)
-        let interruptedHome = Timeline([app, home, unknown, home, unknown, app, home])
-        try await interruptedHome.run()
-        precondition(interruptedHome.visiblePackages == [pkg, pkg])
-        precondition(interruptedHome.time >= 9 && interruptedHome.time < 10)
-        let sustainedHome = Timeline([app, home])
-        try await sustainedHome.run()
-        precondition(sustainedHome.visiblePackages == [pkg])
-        precondition(sustainedHome.coveredTimes.first == 1)
-        precondition(sustainedHome.time - sustainedHome.coveredTimes.first! >= 3)
-        precondition(sustainedHome.transitions == ["visible", "covered", "home"])
-
-        // This is the device's actual blocked window: a SystemUI-owned NotificationShade.
-        let notificationShade = AP.observation(windowReport(owner: "com.android.systemui", title: "NotificationShade"))
-        let initialUnlock = Timeline([notificationShade, home, app, home])
-        try await initialUnlock.run()
-        precondition(initialUnlock.visiblePackages == ["com.android.systemui", pkg])
-        precondition(initialUnlock.transitions == ["visible", "covered", "visible", "covered", "home"])
+        let restricted = Timeline([uncataloged, app, uncataloged, app, app]); restricted.homesVerified = false
+        try await restricted.run()
+        precondition(restricted.visiblePackages == [pkg, pkg])
         let settingsPermission = AP.observation(windowReport(owner: "com.android.settings", title: "Permission dialog",
             focusedApp: "com.android.settings/.Settings$AppManageExternalStorageActivity"))
-        precondition(!AP.isHome(settingsPermission.package, component: settingsPermission.component,
-                               homePackages: ["com.android.settings"]))
-        precondition(AP.allows(settingsPermission.package, requested: pkg, homePackages: ["com.android.settings"],
-                               installedPackages: [], allowSettings: false, launching: true,
-                               component: settingsPermission.component))
+        precondition(!AP.isHome(settingsPermission.package, component: settingsPermission.component, homePackages: ["com.android.settings"]))
         for activity in ["com.android.settings/.FallbackHome", "com.android.settings/com.android.settings.FallbackHome"] {
-            let fallback = AP.observation(windowReport(owner: "com.android.settings", title: "Empty fallback window",
-                                                       focusedApp: activity))
+            let fallback = AP.observation(windowReport(owner: "com.android.settings", title: "Fallback", focusedApp: activity))
             precondition(AP.isHome(fallback.package, component: fallback.component, homePackages: ["com.android.settings"]))
-            precondition(!AP.allows(fallback.package, requested: pkg, homePackages: ["com.android.settings"],
-                                    installedPackages: [], allowSettings: false, launching: false,
-                                    component: fallback.component))
-            let fallbackExit = Timeline([app, fallback])
-            try await fallbackExit.run()
-            precondition(fallbackExit.transitions == ["visible", "covered", "home"])
-            precondition(fallbackExit.visiblePackages == [pkg])
+            let covered = Timeline([app] + Array(repeating: fallback, count: 5) + [app, app])
+            try await covered.run()
+            precondition(covered.events.contains("homeBlocked") && covered.visiblePackages == [pkg, pkg])
         }
-        let customHome = Timeline([app, mislabeled])
-        try await customHome.run()
-        precondition(customHome.transitions == ["visible", "covered", "home"])
-        precondition(customHome.visiblePackages == [pkg])
     }
 
     static func main() async throws {
@@ -397,6 +342,22 @@ struct AndroidAppPresentationTests {
                                     Step(resolve(), main), Step(launch(), "Status: ok")])
         let empty = try await emptyHomes.start()
         precondition(empty.homePackages.isEmpty && empty.homesVerified); emptyHomes.finished()
+
+        // A policy failure must stop before resolving or starting an activity. A successful
+        // policy can add disabled HOME packages to the session's permanent denylist.
+        let policy = MockBridge([Step(AP.readinessCommand, ready), Step(AP.homeCommand, noHome),
+                                 Step(resolve(), main), Step(launch(), "Status: ok")])
+        let prepared = try await policy.start(prepare: { session in
+            precondition(policy.commands == [AP.readinessCommand, AP.homeCommand])
+            return .init(homePackages: session.homePackages.union(["com.example.disabledhome"]), homesVerified: true)
+        })
+        precondition(prepared.homePackages.contains("com.example.disabledhome")); policy.finished()
+        let failedPolicy = MockBridge([Step(AP.readinessCommand, ready), Step(AP.homeCommand, noHome)])
+        do {
+            _ = try await failedPolicy.start(prepare: { _ in throw AP.LaunchError.message("Restore checkpoint failed") })
+            preconditionFailure("An unverified policy must prevent launch")
+        } catch { precondition(error.localizedDescription == "Restore checkpoint failed") }
+        failedPolicy.finished()
 
         // Failed/unsupported HOME enumeration does not block the requested APK or expose another app.
         for step in [Step(AP.homeCommand, "Can't find service: package", status: 20),

@@ -11,18 +11,30 @@ extension WebAppRuntime {
 /// The web app's page, wherever it is shown: full screen or in a window. The same web view each time, so the app keeps its state.
 struct WebAppSurface: UIViewRepresentable {
     let app: TLApp
+    var onThreeFingerTap: (() -> Void)? = nil
 
-    func makeUIView(context: Context) -> WebAppHostView { WebAppHostView(app: app) }
-    func updateUIView(_ view: WebAppHostView, context: Context) {}
+    func makeUIView(context: Context) -> WebAppHostView {
+        let view = WebAppHostView(app: app)
+        view.onThreeFingerTap = onThreeFingerTap
+        return view
+    }
+    func updateUIView(_ view: WebAppHostView, context: Context) { view.onThreeFingerTap = onThreeFingerTap }
 }
 
 final class WebAppHostView: UIView {
     private let runtime: WebAppRuntime?
+    var onThreeFingerTap: (() -> Void)?
 
     init(app: TLApp) {
         runtime = WebAppRuntime.runtime(for: app)
         super.init(frame: .zero)
         backgroundColor = .systemBackground
+        let controls = UITapGestureRecognizer(target: self, action: #selector(showControls))
+        controls.numberOfTouchesRequired = 3
+        controls.cancelsTouchesInView = false
+        controls.delaysTouchesBegan = false
+        controls.delaysTouchesEnded = false
+        addGestureRecognizer(controls)
         guard let runtime else { return }
         let id = app.id
         runtime.onClose = { NotificationCenter.default.post(name: WebAppRuntime.closed, object: id) }
@@ -35,6 +47,8 @@ final class WebAppHostView: UIView {
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
+
+    @objc private func showControls() { onThreeFingerTap?() }
 
     @objc private func edgeSwiped(_ g: UIScreenEdgePanGestureRecognizer) {
         if g.state == .ended, g.translation(in: self).x > 60 { runtime?.back() }
@@ -60,23 +74,21 @@ struct WebAppScreenView: View {
     let app: TLApp
     @Environment(\.dismiss) private var dismiss
     @State private var color: Color = Color(uiColor: .systemBackground)
+    @State private var showControls = false
+    @State private var appStopped = false
 
     private var portrait: Bool { app.apks.first.map { husk_apk_orientation($0) != 0 } ?? true }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                Button { dismiss() } label: { Label("Close", systemImage: "xmark").font(.system(size: 13, weight: .semibold)) }
-                Button { WebAppRuntime.runtime(for: app)?.back() } label: {
-                    Label("Back", systemImage: "chevron.backward").font(.system(size: 13, weight: .semibold))
-                }
-                Spacer()
-                Text(app.label).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary).lineLimit(1)
-            }
-            .padding(.horizontal, 14)
-            .frame(height: 30)
-            .background(Color(uiColor: .systemBackground))
-            WebAppSurface(app: app)
+        WebAppSurface(app: app, onThreeFingerTap: { showControls = true })
+        .ignoresSafeArea()
+        .overlay { if appStopped { AppSessionStoppedNotice { returnToApps() } } }
+        .overlay(alignment: .bottom) { AppControlsHint() }
+        .statusBarHidden(true)
+        .huskHideSystemOverlays()
+        .accessibilityAction(named: Text("App Controls")) { showControls = true }
+        .sheet(isPresented: $showControls) {
+            AppSessionControls(title: app.label, app: app, onReturn: returnToApps) { EmptyView() }
         }
         .background(color.ignoresSafeArea())
         .onAppear {
@@ -85,10 +97,12 @@ struct WebAppScreenView: View {
         }
         .onDisappear { HuskOrientation.set(HuskOrientation.standard) }
         .onReceive(NotificationCenter.default.publisher(for: WebAppRuntime.closed)) { n in
-            if (n.object as? String) == app.id { WebAppRuntime.close(app); dismiss() }
+            if (n.object as? String) == app.id { appStopped = true }
         }
         .onReceive(NotificationCenter.default.publisher(for: WebAppRuntime.chromeChanged)) { _ in refreshColor() }
     }
+
+    private func returnToApps() { WebAppRuntime.close(app); dismiss() }
 
     private func refreshColor() {
         if let hex = WebAppRuntime.runtime(for: app)?.chromeColor, let c = Color(hexString: hex) { color = c }

@@ -52,6 +52,7 @@ final class HuskGLView: UIView {
     override class var layerClass: AnyClass { CAMetalLayer.self }
 
     private var metalLayer: CAMetalLayer { layer as! CAMetalLayer }
+    private lazy var presentationSurface = RuntimePresentationSurface(backing: metalLayer)
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -75,6 +76,9 @@ final class HuskGLView: UIView {
         // console settled that: it was visible, so the layer composites and
         // ANGLE presents into it. What was black was the picture itself.
         backgroundColor = .black
+        // Install the black cover before the backing layer can be published to
+        // ANGLE. It remains opaque until verified cropped frames are presented.
+        _ = presentationSurface
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
@@ -89,10 +93,8 @@ final class HuskGLView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         let scale = window?.screen.scale ?? UIScreen.main.scale
-        metalLayer.contentsScale = scale
-        metalLayer.drawableSize = CGSize(width: bounds.width * scale,
-                                         height: bounds.height * scale)
-        HuskMetalPresenter.shared.attach(layer: metalLayer)
+        presentationSurface.resize(bounds: bounds, scale: scale)
+        HuskMetalPresenter.shared.attach(layer: presentationSurface.layer)
 
         // Nothing here reacts to the device orientation any more.
         //
@@ -227,7 +229,8 @@ final class HuskGLView: UIView {
     private func guestPoint(from p: CGPoint) -> RuntimeDisplayGeometry.Point? {
         // Rendering uses the actual scanout, which can differ from boot argv
         // after Android changes mode. Input must use the same aspect and turn.
-        guard let geometry = HuskMetalPresenter.shared.displayGeometry else { return nil }
+        guard let geometry = HuskMetalPresenter.shared.displayGeometry,
+              AndroidSystemBars.shared.crop(width: Int(geometry.width), height: Int(geometry.height)) == geometry.crop else { return nil }
         return geometry.normalizedPoint(x: Double(p.x), y: Double(p.y),
             viewWidth: Double(bounds.width), viewHeight: Double(bounds.height))
     }

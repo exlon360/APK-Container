@@ -204,17 +204,15 @@ struct TLAppSettingsView: View {
             } header: {
                 Text("Multitasking")
             } footer: {
-                Text("In a window, \(app.label) runs over APK Container: move it by its title bar, resize it from the corner, and minimise it to "
-                   + "the dock at the edge of the screen while you use the rest of APK Container.")
+                Text("Tap with three fingers for window controls. Choose Arrange Window to move or resize the app, or Minimize App to keep it in the dock while using APK Container.")
             }
 
             Section {
-                Toggle("Hide the interface", isOn: $settings.cleanView)
+                Text("Tap with three fingers for app controls.")
             } header: {
-                Text("Screenshots")
+                Text("App Controls")
             } footer: {
-                Text("The game starts with nothing over it: no bar, no controller, no readout. Tap with three fingers at once to bring "
-                   + "the bar back, and again to hide it. The Hide button in the bar does the same while playing.")
+                Text("Host toolbars stay hidden while the app runs. App Files, keyboard controls, and Return to Apps are available in the controls sheet.")
             }
 
             if app.packageName == GeodeSupport.gamePackage {

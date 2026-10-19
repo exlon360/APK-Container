@@ -20,6 +20,7 @@ final class HuskMetalView: MTKView {
     private var guestWidth: Int32 = 0
     private var guestHeight: Int32 = 0
     private var pointer = RuntimeDisplayGeometry.Pointer()
+    private var lastGeometry: RuntimeDisplayGeometry?
 
     init() {
         let dev = MTLCreateSystemDefaultDevice()
@@ -59,8 +60,9 @@ final class HuskMetalView: MTKView {
     /// Map a view-space point into guest pixels, honouring the aspect-fit letterbox
     /// that `draw(in:)` produces.
     private func guestPoint(from p: CGPoint) -> RuntimeDisplayGeometry.Point? {
-        RuntimeDisplayGeometry(width: Double(guestWidth), height: Double(guestHeight), rotated: false)
-            .normalizedPoint(x: Double(p.x), y: Double(p.y),
+        guard let geometry = lastGeometry,
+              AndroidSystemBars.shared.crop(width: Int(geometry.width), height: Int(geometry.height)) == geometry.crop else { return nil }
+        return geometry.normalizedPoint(x: Double(p.x), y: Double(p.y),
                              viewWidth: Double(bounds.width), viewHeight: Double(bounds.height))
     }
 
@@ -136,20 +138,37 @@ extension HuskMetalView: MTKViewDelegate {
               let buffer = commandQueue.makeCommandBuffer(),
               let enc = buffer.makeRenderCommandEncoder(descriptor: pass) else { return }
 
-        // Letterbox: shrink the fullscreen quad on whichever axis has slack so the
-        // guest keeps its aspect ratio.
-        let dw = Double(drawable.texture.width), dh = Double(drawable.texture.height)
-        let gw = Double(texture.width), gh = Double(texture.height)
-        let scale = min(dw / gw, dh / gh)
-        var fit = SIMD2<Float>(Float(gw * scale / dw), Float(gh * scale / dh))
+        let geometry = AndroidSystemBars.shared.crop(width: texture.width, height: texture.height).map {
+            RuntimeDisplayGeometry(width: Double(texture.width), height: Double(texture.height),
+                                   rotated: false, crop: $0)
+        }
+        if let geometry {
+            // The bundled shader samples the full texture. Place that quad in an
+            // oversized viewport, then scissor to the reported app area; this crops
+            // with no CPU pixel copy or replacement precompiled Metal library.
+            let dw = Double(drawable.texture.width), dh = Double(drawable.texture.height)
+            let gw = Double(texture.width), gh = Double(texture.height)
+            let scale = min(dw / geometry.contentWidth, dh / geometry.contentHeight)
+            let imageX = (dw - geometry.contentWidth * scale) / 2
+            let imageY = (dh - geometry.contentHeight * scale) / 2
+            let x = max(0, Int(ceil(imageX))), y = max(0, Int(ceil(imageY)))
+            let right = min(Int(dw), Int(floor(imageX + geometry.contentWidth * scale)))
+            let bottom = min(Int(dh), Int(floor(imageY + geometry.contentHeight * scale)))
+            var fit = SIMD2<Float>(1, 1)
 
-        enc.setRenderPipelineState(pipeline)
-        enc.setVertexBytes(&fit, length: MemoryLayout<SIMD2<Float>>.size, index: 0)
-        enc.setFragmentTexture(texture, index: 0)
-        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+            enc.setRenderPipelineState(pipeline)
+            enc.setViewport(MTLViewport(originX: imageX - geometry.crop.left * gw * scale,
+                                        originY: imageY - geometry.crop.top * gh * scale,
+                                        width: gw * scale, height: gh * scale, znear: 0, zfar: 1))
+            enc.setScissorRect(MTLScissorRect(x: x, y: y, width: max(0, right - x), height: max(0, bottom - y)))
+            enc.setVertexBytes(&fit, length: MemoryLayout<SIMD2<Float>>.size, index: 0)
+            enc.setFragmentTexture(texture, index: 0)
+            enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+        }
         enc.endEncoding()
         buffer.present(drawable)
         buffer.commit()
+        lastGeometry = geometry
     }
 }
 

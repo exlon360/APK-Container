@@ -15,12 +15,14 @@
 		03C7BA933706E9F45DD7A8EE /* icon-tinteddark.png in Resources */ = {isa = PBXBuildFile; fileRef = EE533073FECAD5C54B677935 /* icon-tinteddark.png */; };
 		0571BFDC9E02848C62133B4E /* husk-tl-dvm.c in Sources */ = {isa = PBXBuildFile; fileRef = 642A69428A8151E1B1F75CBB /* husk-tl-dvm.c */; };
 		057DC4AF3D4EBA982E4C3FF8 /* husk-tl-scan.c in Sources */ = {isa = PBXBuildFile; fileRef = 4385A14B11CBA1C3502D433D /* husk-tl-scan.c */; };
+		05F9351F3F903D4B204F57EF /* GuestKeyboardInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10E7010C8B87760E615CE3D6 /* GuestKeyboardInput.swift */; };
 		08FD8CEA2066A8C013B2DF8B /* husk-tl-unity-app.c in Sources */ = {isa = PBXBuildFile; fileRef = BCA22CD85A237E860D437698 /* husk-tl-unity-app.c */; };
 		090A2A3F43CE69EA3C079EB0 /* HuskLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6541CC4432CA2CE74901320 /* HuskLog.swift */; };
 		0B197878C829D66E77FD7E3F /* libANGLE-shared.dylib in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 3B1406C4A7D0F7E50BCB365B /* libANGLE-shared.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		0BB57A13C0D48446CB4FBCD5 /* TLUnityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 211CC4F06EC722E5972D7F3B /* TLUnityView.swift */; };
 		0CFC78E800ABA22AA65D873D /* HuskFilePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6146DAE69D6D6462FB1FB771 /* HuskFilePicker.swift */; };
 		0DAAE0E82288A651F11827CB /* HuskDownloadActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25DB1D606431C481B06C7337 /* HuskDownloadActivity.swift */; };
+		0DB86571E1D61C87B606354C /* AndroidPolicyEpochGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F2623030CDC1A8FD4EFB3F5 /* AndroidPolicyEpochGuard.swift */; };
 		0EC1E9FBD9A5014FB1AA9334 /* husk-tl-sdl.c in Sources */ = {isa = PBXBuildFile; fileRef = C48A155D03D70E7DC8411ED5 /* husk-tl-sdl.c */; };
 		0FA2BBF68B30B5630789922B /* husk-tl-json.c in Sources */ = {isa = PBXBuildFile; fileRef = 242DD6EEB7DA97455CD76826 /* husk-tl-json.c */; };
 		12F633F698047D7DED62A51D /* husk-tl-gameactivity.c in Sources */ = {isa = PBXBuildFile; fileRef = CFAB9C41A483CA08C1037AAC /* husk-tl-gameactivity.c */; };
@@ -44,6 +46,7 @@
 		2382523F24A95C0E58189C78 /* husk-tl-bionic-cxx.c in Sources */ = {isa = PBXBuildFile; fileRef = 44BAD09F39FA4184F97AB0D0 /* husk-tl-bionic-cxx.c */; };
 		240D4917EC7FC510B753EB4E /* husk-tl-jni-cocos.c in Sources */ = {isa = PBXBuildFile; fileRef = B76CE6F39722749AA0027959 /* husk-tl-jni-cocos.c */; };
 		2472A0B862A3BC5106DBAEBC /* husk-tl-load.c in Sources */ = {isa = PBXBuildFile; fileRef = 5BE31DC5ACA28C0133F828FA /* husk-tl-load.c */; };
+		2984650CBF28DFE337A70C17 /* RuntimePresentationSurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA35619B7D8204A54E6FD795 /* RuntimePresentationSurface.swift */; };
 		29B4497EDC1E890D82BDF969 /* GuestManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A0490485F9BA884A0554EAD /* GuestManifest.swift */; };
 		29CF21D2D0395FE19CC8D95D /* Holiday.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB613D9704124AC887763433 /* Holiday.swift */; };
 		2A3E4ED499EAA7EDDFCB3EE2 /* husk-tl-bionic-ldbl.c in Sources */ = {isa = PBXBuildFile; fileRef = 39B1A738A583D4E01CB15C60 /* husk-tl-bionic-ldbl.c */; };
@@ -99,9 +102,11 @@
 		70AAC964808B173B7E8E395B /* husk-tl-va.c in Sources */ = {isa = PBXBuildFile; fileRef = 23EF05EC9B3D8A0E6E8FC720 /* husk-tl-va.c */; };
 		70AF7E999105691EB51B54FD /* JITSetup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83275C7FEF2DEB950028D914 /* JITSetup.swift */; };
 		7197DC98582596A2FE390FF2 /* husk-tl-bionic-sys.c in Sources */ = {isa = PBXBuildFile; fileRef = ABC0FA8EF2530487F1EE6499 /* husk-tl-bionic-sys.c */; };
+		78A5B2CF98D3EA94C52FC2F2 /* AndroidSystemBars.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E97A0D5BE7966E6FDDD7E03 /* AndroidSystemBars.swift */; };
 		79606C9B3D5AF0CEADE3482D /* GuestImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 771B4FD56CABC214FEED6DFE /* GuestImage.swift */; };
 		7A7A40B3B76C8BA2D7262907 /* husk-tl-egl-es31.inc in Resources */ = {isa = PBXBuildFile; fileRef = CE99D9E12CB5823C669D9CBC /* husk-tl-egl-es31.inc */; };
 		7CA02F2FB22207E86499451E /* DownloadsWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC2F367C3774A342D33D245F /* DownloadsWidget.swift */; };
+		7CF8949688EEEB132A6C2BF4 /* AndroidAppOnlyPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 722A3736A8DE1A525DB8768D /* AndroidAppOnlyPolicy.swift */; };
 		7EF41C59B3AF51A4E96F20E0 /* fishhook.c in Sources */ = {isa = PBXBuildFile; fileRef = CC860BD7A5AF9DC83B015219 /* fishhook.c */; };
 		7FA5D73DC2780CACC7399534 /* BundleUnpacker.swift in Sources */ = {isa = PBXBuildFile; fileRef = E37298010F80517A3057579E /* BundleUnpacker.swift */; };
 		80C126C7BDB5EE56A7139C20 /* husk-tl-audio.c in Sources */ = {isa = PBXBuildFile; fileRef = 463C342B38F6BF37752F4E72 /* husk-tl-audio.c */; };
@@ -134,6 +139,7 @@
 		A7FBE49898024C7B1D03E018 /* husk-tl-sound.c in Sources */ = {isa = PBXBuildFile; fileRef = 91DE2675795B851A4C47ED9E /* husk-tl-sound.c */; };
 		AAF3739690794B605F5D7CAE /* husk-tl-dexindex.c in Sources */ = {isa = PBXBuildFile; fileRef = AA12F6AB59959C0162BB8928 /* husk-tl-dexindex.c */; };
 		AC5C07974C7A8658358A55C9 /* husk-tl-a64.c in Sources */ = {isa = PBXBuildFile; fileRef = 3ADCEA1477DA816D867C1EBB /* husk-tl-a64.c */; };
+		AEB9685A4EE92DD7C9863FD3 /* AndroidPolicyRestoreJournal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01DEA2E18403244F3169B103 /* AndroidPolicyRestoreJournal.swift */; };
 		AFB5E3E73BFA43BA50428CF6 /* husk-tl-dvm-graphics.c in Sources */ = {isa = PBXBuildFile; fileRef = 3B4754DCDA6CFFE02F854C6A /* husk-tl-dvm-graphics.c */; };
 		B1A23EB1ECB66F41D260088E /* icon-tinted.png in Resources */ = {isa = PBXBuildFile; fileRef = DB769546B6E9A4164A739DE4 /* icon-tinted.png */; };
 		B4CE75407A317521C77A2207 /* husk-tl-jni-loop.c in Sources */ = {isa = PBXBuildFile; fileRef = FE8922E7AB75C8C61B37986A /* husk-tl-jni-loop.c */; };
@@ -160,6 +166,7 @@
 		D1DB4D94478AB7DD95E1A24E /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79E4865C5FE44ADD210A4917 /* OnboardingView.swift */; };
 		D354FA5AC96B3361B4A5A635 /* ApkMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C3D6F74AFBE5CD222DE0553 /* ApkMetadata.swift */; };
 		D3FC03CCE41C4AB9A969AA6E /* husk-tl-dvm-gles10ext.c in Sources */ = {isa = PBXBuildFile; fileRef = 60B6DEB5B27C73D8E79DC5BA /* husk-tl-dvm-gles10ext.c */; };
+		D41BB1A7358925EB538DF2F1 /* AppSessionControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8A48B6AC3DCE0A9A02E6D24 /* AppSessionControls.swift */; };
 		D61EF536158A8495F2B0CE79 /* JITSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5894E74BA308222C01AEE311 /* JITSetupView.swift */; };
 		D6E9F96BE6AF7C985488D030 /* VirtualPad.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F570EB6EAB321272B32955C /* VirtualPad.swift */; };
 		D948883B3C09C9D89EB27927 /* RuntimeDisplayDensity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 738FE2CB221BBCF93ACBB4CB /* RuntimeDisplayDensity.swift */; };
@@ -249,15 +256,18 @@
 
 /* Begin PBXFileReference section */
 		0168E1B352FFD7A4BC207CA5 /* HuskBridgeFS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HuskBridgeFS.swift; sourceTree = "<group>"; };
+		01DEA2E18403244F3169B103 /* AndroidPolicyRestoreJournal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AndroidPolicyRestoreJournal.swift; sourceTree = "<group>"; };
 		02BDBFFD3329C33172416AEB /* husk-tl-ld.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "husk-tl-ld.h"; sourceTree = "<group>"; };
 		036699CBF5693E75237EF112 /* PlayDevice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayDevice.swift; sourceTree = "<group>"; };
 		0384223FE1CD6D8C7C3A22A0 /* PlayStoreManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayStoreManager.swift; sourceTree = "<group>"; };
 		08B65F9A6BAA4E2376A0CBD8 /* husk-tl-shim.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-shim.c"; sourceTree = "<group>"; };
 		0BF5756DFAA31BA30063664B /* FAQTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FAQTab.swift; sourceTree = "<group>"; };
 		0C8178C469873F2DA90BB728 /* husk-tl-gameactivity.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "husk-tl-gameactivity.h"; sourceTree = "<group>"; };
+		0F2623030CDC1A8FD4EFB3F5 /* AndroidPolicyEpochGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AndroidPolicyEpochGuard.swift; sourceTree = "<group>"; };
 		0F570EB6EAB321272B32955C /* VirtualPad.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VirtualPad.swift; sourceTree = "<group>"; };
 		0FCF57D3D74B527852EC0327 /* AppIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIcon.swift; sourceTree = "<group>"; };
 		100DF87CB49D35A4DA089C94 /* husk-tl-framework.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "husk-tl-framework.h"; sourceTree = "<group>"; };
+		10E7010C8B87760E615CE3D6 /* GuestKeyboardInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestKeyboardInput.swift; sourceTree = "<group>"; };
 		14467C88832643891E985F27 /* husk-tl-dvm-proxy.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-dvm-proxy.c"; sourceTree = "<group>"; };
 		146A928FB0D632B3FC9E4328 /* WebAppViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebAppViews.swift; sourceTree = "<group>"; };
 		14E50E2B9CCFF7B1FEF73608 /* HuskAudio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HuskAudio.swift; sourceTree = "<group>"; };
@@ -361,6 +371,7 @@
 		7087E37F05675CE3FD4EDEE2 /* ItemPages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ItemPages.swift; sourceTree = "<group>"; };
 		7104A621330A81BD69495520 /* husk-tl-internal.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "husk-tl-internal.h"; sourceTree = "<group>"; };
 		71DD2E2A2A0B0AB86EE783DD /* Compat15.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Compat15.swift; sourceTree = "<group>"; };
+		722A3736A8DE1A525DB8768D /* AndroidAppOnlyPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AndroidAppOnlyPolicy.swift; sourceTree = "<group>"; };
 		738FE2CB221BBCF93ACBB4CB /* RuntimeDisplayDensity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeDisplayDensity.swift; sourceTree = "<group>"; };
 		766F6F7816E672E83CFFE47D /* PipeShim.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = PipeShim.c; sourceTree = "<group>"; };
 		771B4FD56CABC214FEED6DFE /* GuestImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestImage.swift; sourceTree = "<group>"; };
@@ -370,6 +381,7 @@
 		7AD4F32F70E9594D17CB047B /* husk-tl-dvm-natives.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-dvm-natives.c"; sourceTree = "<group>"; };
 		7B5E2D3E9F12A2A3BB5BBDC7 /* husk-tl-gtasa.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "husk-tl-gtasa.h"; sourceTree = "<group>"; };
 		7CC582FAC1F17C1C659C9D47 /* husk-tl-bionic-io.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-bionic-io.c"; sourceTree = "<group>"; };
+		7E97A0D5BE7966E6FDDD7E03 /* AndroidSystemBars.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AndroidSystemBars.swift; sourceTree = "<group>"; };
 		7F8AFBCC1E9A402444C2D1E6 /* husk-tl-bionic-net.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-bionic-net.c"; sourceTree = "<group>"; };
 		7FD8DC66414547110F0E0B0E /* husk-tl-res.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-res.c"; sourceTree = "<group>"; };
 		7FE5D3DD79B5BEA14506FF60 /* husk-tl-dex.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-dex.c"; sourceTree = "<group>"; };
@@ -407,6 +419,7 @@
 		A81352103CC22A0719104C2C /* husk-tl.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "husk-tl.h"; sourceTree = "<group>"; };
 		A99AEC85D6AE000EB6520C37 /* RuntimeSnapshotPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeSnapshotPolicy.swift; sourceTree = "<group>"; };
 		AA12F6AB59959C0162BB8928 /* husk-tl-dexindex.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-dexindex.c"; sourceTree = "<group>"; };
+		AA35619B7D8204A54E6FD795 /* RuntimePresentationSurface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimePresentationSurface.swift; sourceTree = "<group>"; };
 		AAE77760F5BCF4EFAEFE146D /* Downloads.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Downloads.swift; sourceTree = "<group>"; };
 		AB426A5230A1E0CF10EE402F /* husk-tl-dvm-media.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-dvm-media.c"; sourceTree = "<group>"; };
 		ABC0FA8EF2530487F1EE6499 /* husk-tl-bionic-sys.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-bionic-sys.c"; sourceTree = "<group>"; };
@@ -430,6 +443,7 @@
 		C48A9F257449472675C4201A /* HuskJITHelper.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = HuskJITHelper.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		C575FDA8867C3A75AB2392E3 /* husk-tl-jni-fmod.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-jni-fmod.c"; sourceTree = "<group>"; };
 		C6541CC4432CA2CE74901320 /* HuskLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HuskLog.swift; sourceTree = "<group>"; };
+		C8A48B6AC3DCE0A9A02E6D24 /* AppSessionControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSessionControls.swift; sourceTree = "<group>"; };
 		CB3F6E9B90C81C37AAABE363 /* husk-tl-blit.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-blit.c"; sourceTree = "<group>"; };
 		CB613D9704124AC887763433 /* Holiday.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Holiday.swift; sourceTree = "<group>"; };
 		CC60CF82D64B2CBA61196F88 /* husk-tl-gamepad.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "husk-tl-gamepad.h"; sourceTree = "<group>"; };
@@ -510,12 +524,17 @@
 		0F8D2787A26076A289B9B8EA /* Husk */ = {
 			isa = PBXGroup;
 			children = (
+				722A3736A8DE1A525DB8768D /* AndroidAppOnlyPolicy.swift */,
 				D031C2F9F1F3AAB90643F670 /* AndroidAppPresentation.swift */,
+				0F2623030CDC1A8FD4EFB3F5 /* AndroidPolicyEpochGuard.swift */,
+				01DEA2E18403244F3169B103 /* AndroidPolicyRestoreJournal.swift */,
+				7E97A0D5BE7966E6FDDD7E03 /* AndroidSystemBars.swift */,
 				2C3D6F74AFBE5CD222DE0553 /* ApkMetadata.swift */,
 				3F5C62F392C6EE9D6F1B9407 /* AppClip.swift */,
 				C1F2A4FC567A4CCC74209DD4 /* AppDetailView.swift */,
 				9651633AB1B5F444EB71B286 /* AppDiagnosis.swift */,
 				0FCF57D3D74B527852EC0327 /* AppIcon.swift */,
+				C8A48B6AC3DCE0A9A02E6D24 /* AppSessionControls.swift */,
 				15D08F1730303C74C1B7DE23 /* AppSource.swift */,
 				D05B2EFC533719ED2E455C24 /* AppTheme.swift */,
 				FA8F4838EC0E68E364143E79 /* AppWindows.swift */,
@@ -538,6 +557,7 @@
 				7A59295CA11423842CD527E0 /* GameStatus.swift */,
 				9736391C1BCE43667293DB7B /* Geode.swift */,
 				771B4FD56CABC214FEED6DFE /* GuestImage.swift */,
+				10E7010C8B87760E615CE3D6 /* GuestKeyboardInput.swift */,
 				4A0490485F9BA884A0554EAD /* GuestManifest.swift */,
 				CB613D9704124AC887763433 /* Holiday.swift */,
 				619394B1069242D8750E7F33 /* Husk.entitlements */,
@@ -570,6 +590,7 @@
 				2E91A601F16886103BC482AB /* QemuRunner.swift */,
 				83C3442EEF7A8B8F5B12C814 /* RuntimeDisplayConfiguration.swift */,
 				738FE2CB221BBCF93ACBB4CB /* RuntimeDisplayDensity.swift */,
+				AA35619B7D8204A54E6FD795 /* RuntimePresentationSurface.swift */,
 				A99AEC85D6AE000EB6520C37 /* RuntimeSnapshotPolicy.swift */,
 				5D01B6F6F9B57E73E4B319F2 /* SaveBackup.swift */,
 				AE14E4B61CC873501D7EAE6E /* SettingsTab.swift */,
@@ -1044,12 +1065,17 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7CF8949688EEEB132A6C2BF4 /* AndroidAppOnlyPolicy.swift in Sources */,
 				B8883B7078E1605E3029AF16 /* AndroidAppPresentation.swift in Sources */,
+				0DB86571E1D61C87B606354C /* AndroidPolicyEpochGuard.swift in Sources */,
+				AEB9685A4EE92DD7C9863FD3 /* AndroidPolicyRestoreJournal.swift in Sources */,
+				78A5B2CF98D3EA94C52FC2F2 /* AndroidSystemBars.swift in Sources */,
 				D354FA5AC96B3361B4A5A635 /* ApkMetadata.swift in Sources */,
 				42B7F8F954D9CF0C84AFD8EE /* AppClip.swift in Sources */,
 				5C20168883D258DF9715F6D9 /* AppDetailView.swift in Sources */,
 				8CA6BE4E0A271053E40DA9BA /* AppDiagnosis.swift in Sources */,
 				4EF06C9496D4D86646EFD631 /* AppIcon.swift in Sources */,
+				D41BB1A7358925EB538DF2F1 /* AppSessionControls.swift in Sources */,
 				8C743346878007F8D22CEA0A /* AppSource.swift in Sources */,
 				F6B3DA43CA16FAF920EF236D /* AppTheme.swift in Sources */,
 				6CA4A4E301BCB015E19AF7A8 /* AppWindows.swift in Sources */,
@@ -1070,6 +1096,7 @@
 				6EE0DCCC80014D645AC6E23A /* Geode.swift in Sources */,
 				E71E7F636CCD7BBC696B4619 /* GoogleSignInSheet.swift in Sources */,
 				79606C9B3D5AF0CEADE3482D /* GuestImage.swift in Sources */,
+				05F9351F3F903D4B204F57EF /* GuestKeyboardInput.swift in Sources */,
 				29B4497EDC1E890D82BDF969 /* GuestManifest.swift in Sources */,
 				29CF21D2D0395FE19CC8D95D /* Holiday.swift in Sources */,
 				581DC803F723FFB10DDA759F /* HuskApp.swift in Sources */,
@@ -1104,6 +1131,7 @@
 				5E4B0292717DAE8B0CAA99E4 /* QemuRunner.swift in Sources */,
 				D134A3FC6605B408C54A2E03 /* RuntimeDisplayConfiguration.swift in Sources */,
 				D948883B3C09C9D89EB27927 /* RuntimeDisplayDensity.swift in Sources */,
+				2984650CBF28DFE337A70C17 /* RuntimePresentationSurface.swift in Sources */,
 				F4478D31BFB1BEC6BDAB7176 /* RuntimeSnapshotPolicy.swift in Sources */,
 				DFF5B4345D574C8ECC39122F /* SaveBackup.swift in Sources */,
 				211C2D134F11C23EE4485A2E /* SettingsTab.swift in Sources */,

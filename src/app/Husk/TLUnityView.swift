@@ -101,6 +101,7 @@ final class TLUnityUIView: UIView, UIKeyInput {
         stats.textAlignment = .center
         stats.isUserInteractionEnabled = false
         stats.text = " "
+        stats.isHidden = true // Performance details live in the requested native controls.
         if engine == .unity { addSubview(stats) }
         if engine == .unity {
             TLUnityUIView.cocosView = self
@@ -736,6 +737,8 @@ struct TLUnityScreen: UIViewRepresentable {
     /// engine cannot be started twice, so coming back to the game must show the same layer, not a new one.
     private static var shared: [String: TLUnityUIView] = [:]
 
+    static func showKeyboard(apk: String) { shared[apk]?.becomeFirstResponder() }
+
     /// The game's one view, made the first time it is asked for.
     static func view(apk: String, extraApks: [String], dataDir: String, engine: TLNativeEngine, portrait: Bool,
                      resolution: TLAppSettings.Resolution, maximumRenderEdge: Int) -> TLUnityUIView {
@@ -826,7 +829,6 @@ struct TLCocosAttemptView: View {
     @StateObject private var model = TLUnityModel()
     /// Why the app stopped, when its log says: shown over the screen
     @State private var stoppedWhy: AppDiagnosis?
-    @AppStorage("husk.tl.unity.showLog") private var showLogSetting = false
     @AppStorage(TranslationLayer.devInfoKey) private var devInfo = false
     @State private var stats = "starting"
     @ObservedObject private var pads = HuskGamepads.shared
@@ -841,13 +843,14 @@ struct TLCocosAttemptView: View {
     @State private var uiHidden: Bool
     /// The line saying how to get the interface back, shown for a few seconds after it goes.
     @State private var hint = false
-    private var showLog: Bool { get { showLogSetting && devInfo } nonmutating set { showLogSetting = newValue } }
+    @State private var appStopped = false
+    @State private var keyboardRequested = false
 
     init(app: TLApp) {
         self.app = app
         let loaded = TLAppSettings.load(app.id)
         _settings = State(initialValue: loaded)
-        _uiHidden = State(initialValue: loaded.cleanView)
+        _uiHidden = State(initialValue: true)
     }
 
     private var engine: TLNativeEngine { app.screenEngine }
@@ -870,8 +873,7 @@ struct TLCocosAttemptView: View {
     }
 
     private func toggleInterface() {
-        withAnimation(.easeInOut(duration: 0.15)) { uiHidden.toggle() }
-        if uiHidden { showHint() }
+        uiHidden = false
     }
 
     private func showHint() {
@@ -912,24 +914,10 @@ struct TLCocosAttemptView: View {
                     .ignoresSafeArea()
                 }
             }
-            if !uiHidden {
-                VStack(spacing: 0) {
-                    bar
-                    if showLog {
-                        HStack(spacing: 0) {
-                            Spacer(minLength: 0)
-                            logPanel.frame(width: 320)
-                        }
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
-                    } else {
-                        Spacer(minLength: 0)
-                    }
-                }
-            }
             if hint {
                 VStack {
                     Spacer()
-                    Text("Tap with three fingers to show the interface")
+                    Text("Tap with three fingers for app controls")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 14).padding(.vertical, 8)
@@ -938,6 +926,11 @@ struct TLCocosAttemptView: View {
                 }
                 .allowsHitTesting(false)
                 .transition(.opacity)
+            }
+        }
+        .background {
+            if blockedBy != nil || app.apks.isEmpty {
+                AppControlsGesture(active: uiHidden) { toggleInterface() }
             }
         }
         .statusBarHidden(true)
@@ -961,6 +954,7 @@ struct TLCocosAttemptView: View {
                 stoppedWhy = d
                 GameStatusStore.shared.record(app.id, st == Int32(HUSK_UNITY_FAILED) ? .failed : .crashed, diagnosis: d)
             } else if st == Int32(HUSK_UNITY_FAILED) { GameStatusStore.shared.record(app.id, .failed) }
+            if st == Int32(HUSK_UNITY_ENDED) || st == Int32(HUSK_UNITY_FAILED) { appStopped = true }
         }
         .onDisappear {
             CrashReport.gameEnded()
@@ -968,8 +962,42 @@ struct TLCocosAttemptView: View {
             UIApplication.shared.isIdleTimerDisabled = false
             HuskOrientation.set(HuskOrientation.standard)
         }
-        .onReceive(NotificationCenter.default.publisher(for: TLUnityUIView.appClosedItself)) { _ in dismiss() }
-        .overlay { if let d = stoppedWhy { AppStoppedOverlay(app: app, diagnosis: d) { dismiss() } } }
+        .onReceive(NotificationCenter.default.publisher(for: TLUnityUIView.appClosedItself)) { _ in appStopped = true }
+        .overlay {
+            if let d = stoppedWhy { AppStoppedOverlay(app: app, diagnosis: d) { dismiss() } }
+            else if appStopped { AppSessionStoppedNotice { dismiss() } }
+        }
+        .accessibilityAction(named: Text("App Controls")) { toggleInterface() }
+        .sheet(isPresented: Binding(get: { !uiHidden }, set: { uiHidden = !$0 }), onDismiss: {
+            if keyboardRequested, let apk = app.apks.first {
+                keyboardRequested = false
+                TLUnityScreen.showKeyboard(apk: apk)
+            }
+        }) {
+            AppSessionControls(title: app.label, app: app, onReturn: { dismiss() }) {
+                Section {
+                    Button {
+                        keyboardRequested = true
+                        uiHidden = true
+                    } label: { Label("Show Keyboard", systemImage: "keyboard") }
+                    if padOffered {
+                        Toggle("On-screen controller", isOn: Binding(get: { settings.padShown }, set: {
+                            settings.padShown = $0; settings.save(app.id)
+                            if !$0 { editingPad = false }
+                        }))
+                        if settings.padShown {
+                            Button("Edit Controller") { padSelected = nil; editingPad = true; uiHidden = true }
+                        }
+                    }
+                }
+                if devInfo {
+                    Section {
+                        Text(stats).font(.footnote.monospaced())
+                        NavigationLink("Runtime Log") { logPanel.navigationTitle("Runtime Log") }
+                    }
+                }
+            }
+        }
     }
 
     /// While the pad is being edited: what to do with the control picked, in a small panel in the middle of the screen.
@@ -1004,58 +1032,6 @@ struct TLCocosAttemptView: View {
         .padding(16)
         .background(.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 16))
         .font(.system(size: 13, weight: .semibold))
-    }
-
-    private var bar: some View {
-        HStack(spacing: 12) {
-            Button { dismiss() } label: {
-                Label("Close", systemImage: "xmark").font(.system(size: 13, weight: .semibold))
-            }
-            .tint(.white)
-            if engine == .flutter {
-                Button { husk_flutter_back() } label: {
-                    Label("Back", systemImage: "chevron.backward").font(.system(size: 13, weight: .semibold))
-                }
-                .tint(.white)
-            }
-            Circle().fill(model.statusColor).frame(width: 7, height: 7)
-            Text(model.state == Int32(HUSK_UNITY_RUNNING) ? app.label : model.statusText)
-                .font(.system(size: 12, weight: .medium)).foregroundStyle(.white.opacity(0.85)).lineLimit(1)
-            Spacer()
-            if !pads.names.isEmpty {
-                Label(pads.names.count == 1 ? pads.names[0] : "\(pads.names.count) controllers", systemImage: "gamecontroller.fill")
-                    .font(.system(size: 11, weight: .medium)).foregroundStyle(.white.opacity(0.7)).lineLimit(1)
-            }
-            if padOffered {
-                Button { settings.padShown.toggle(); settings.save(app.id); if !settings.padShown { editingPad = false } } label: {
-                    Label(settings.padShown ? "Hide pad" : "Pad", systemImage: "gamecontroller").font(.system(size: 12, weight: .semibold))
-                }
-                .tint(.white)
-                if settings.padShown {
-                    Button { padSelected = nil; editingPad.toggle() } label: {
-                        Label(editingPad ? "Done" : "Edit pad", systemImage: "slider.horizontal.below.square.and.square.filled")
-                            .font(.system(size: 12, weight: .semibold))
-                    }
-                    .tint(editingPad ? .yellow : .white)
-                }
-            }
-            if settings.showStats, model.state == Int32(HUSK_UNITY_RUNNING) {
-                Text(stats).font(.technical(11)).foregroundStyle(.white.opacity(0.7)).lineLimit(1)
-            }
-            if devInfo {
-                Button { withAnimation(.snappy(duration: 0.25)) { showLog.toggle() } } label: {
-                    Text(showLog ? "Hide log" : "Log").font(.system(size: 12, weight: .semibold))
-                }
-                .tint(.white)
-            }
-            Button { toggleInterface() } label: {
-                Label("Hide", systemImage: "eye.slash").font(.system(size: 12, weight: .semibold))
-            }
-            .tint(.white)
-        }
-        .padding(.horizontal, 14)
-        .frame(height: 30)
-        .background(Color(white: 0.08))
     }
 
     private var logPanel: some View {

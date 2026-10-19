@@ -152,20 +152,46 @@ struct RuntimeDisplayConfiguration: Equatable {
 /// are normalized first, then mapped to QEMU's actual console size at the event.
 struct RuntimeDisplayGeometry {
     struct Point: Equatable { let x: Double; let y: Double }
+    /// Normalized coordinates in the complete physical scanout, before the
+    /// optional host quarter turn. Only reported system bar areas are removed.
+    struct Crop: Equatable {
+        let left: Double
+        let top: Double
+        let right: Double
+        let bottom: Double
+        static let full = Crop(left: 0, top: 0, right: 1, bottom: 1)
+        var width: Double { right - left }
+        var height: Double { bottom - top }
+        var isValid: Bool {
+            [left, top, right, bottom].allSatisfy(\.isFinite)
+                && left >= 0 && top >= 0 && right <= 1 && bottom <= 1
+                && width > 0 && height > 0
+        }
+    }
     let width: Double
     let height: Double
     let rotated: Bool
+    var crop: Crop = .full
+    var contentWidth: Double { width * crop.width }
+    var contentHeight: Double { height * crop.height }
+    var effectiveWidth: Double { rotated ? contentHeight : contentWidth }
+    var effectiveHeight: Double { rotated ? contentWidth : contentHeight }
 
     func normalizedPoint(x: Double, y: Double, viewWidth: Double, viewHeight: Double) -> Point? {
-        guard [width, height, viewWidth, viewHeight].allSatisfy({ $0.isFinite && $0 > 0 }),
+        guard crop.isValid,
+              [width, height, viewWidth, viewHeight].allSatisfy({ $0.isFinite && $0 > 0 }),
               x.isFinite, y.isFinite else { return nil }
-        let effectiveWidth = rotated ? height : width
-        let effectiveHeight = rotated ? width : height
         let scale = min(viewWidth / effectiveWidth, viewHeight / effectiveHeight)
         let px = (x - (viewWidth - effectiveWidth * scale) / 2) / (effectiveWidth * scale)
         let py = (y - (viewHeight - effectiveHeight * scale) / 2) / (effectiveHeight * scale)
-        guard px >= 0, px < 1, py >= 0, py < 1 else { return nil }
-        return rotated ? Point(x: 1 - py, y: px) : Point(x: px, y: py)
+        // Normalized integer crops can leave a sub-ulp inset after multiplying
+        // back to pixels. Accept that rounding at the leading edges only.
+        guard px >= -1e-12, px < 1, py >= -1e-12, py < 1 else { return nil }
+        let local = rotated ? Point(x: 1 - max(0, py), y: max(0, px)) : Point(x: max(0, px), y: max(0, py))
+        // A quarter-turned leading edge maps to local 1. Keep its pixel inside
+        // the crop, rather than sending a tap to the first hidden navigation row.
+        return Point(x: min(crop.right - 0.5 / width, max(crop.left + 0.5 / width, crop.left + local.x * crop.width)),
+                     y: min(crop.bottom - 0.5 / height, max(crop.top + 0.5 / height, crop.top + local.y * crop.height)))
     }
 
     static func pixels(_ point: Point, width: Int32, height: Int32) -> (Int32, Int32)? {

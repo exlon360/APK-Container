@@ -16,6 +16,7 @@ import UIKit
 final class KeyCapturingView: UIView, UIKeyInput {
 
     override var canBecomeFirstResponder: Bool { true }
+    private var hardwareInput = GuestKeyboardInput()
 
     // MARK: - UIKeyInput (software keyboard)
 
@@ -58,35 +59,52 @@ final class KeyCapturingView: UIView, UIKeyInput {
     // MARK: - Hardware keyboard
 
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        var handled = false
+        var unhandled = presses
         for press in presses {
             if let key = press.key, let qcode = Self.hidMap[key.keyCode] {
-                _ = husk_display_send_key(qcode, true)
-                handled = true
+                send(hardwareInput.keyDown(qcode,
+                     meta: key.modifierFlags.contains(.command),
+                     alt: key.modifierFlags.contains(.alternate)))
+                unhandled.remove(press)
             }
         }
-        if !handled { super.pressesBegan(presses, with: event) }
+        if !unhandled.isEmpty { super.pressesBegan(unhandled, with: event) }
     }
 
     override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        var handled = false
+        var unhandled = presses
         for press in presses {
             if let key = press.key, let qcode = Self.hidMap[key.keyCode] {
-                _ = husk_display_send_key(qcode, false)
-                handled = true
+                send(hardwareInput.keyUp(qcode))
+                unhandled.remove(press)
             }
         }
-        if !handled { super.pressesEnded(presses, with: event) }
+        if !unhandled.isEmpty { super.pressesEnded(unhandled, with: event) }
     }
 
     override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        // Release everything we were told about, or the guest is left with a key
-        // stuck down.
-        for press in presses {
-            if let key = press.key, let qcode = Self.hidMap[key.keyCode] {
-                _ = husk_display_send_key(qcode, false)
-            }
-        }
+        releaseHardwareKeys()
+        super.pressesCancelled(presses, with: event)
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned { releaseHardwareKeys() }
+        return resigned
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window == nil { releaseHardwareKeys() }
+    }
+
+    func releaseHardwareKeys() {
+        for event in hardwareInput.releaseAll() { send(event) }
+    }
+
+    private func send(_ event: GuestKeyboardInput.Event?) {
+        guard let event else { return }
+        _ = husk_display_send_key(event.key, event.down)
     }
 
     // MARK: - Maps
@@ -206,6 +224,11 @@ struct KeyCapture: UIViewRepresentable {
             view.resignFirstResponder()
         }
     }
+
+    static func dismantleUIView(_ view: KeyCapturingView, coordinator: ()) {
+        view.resignFirstResponder()
+        view.releaseHardwareKeys()
+    }
 }
 
 /// The keys a touch-only user cannot otherwise reach, and that Android and a
@@ -253,5 +276,11 @@ struct SpecialKeysBar: View {
             }
         }
         .foregroundStyle(.primary)
+        .onDisappear {
+            if ctrlLatched {
+                ctrlLatched = false
+                _ = husk_display_send_key("ctrl", false)
+            }
+        }
     }
 }

@@ -79,6 +79,10 @@ private struct AppWindow: View {
     @ObservedObject private var windows = AppWindows.shared
     @StateObject private var model = TLUnityModel()
     @State private var stoppedWhy: AppDiagnosis?
+    @State private var appStopped = false
+    @State private var showControls = false
+    @State private var showWindowChrome = false
+    @State private var keyboardRequested = false
     /// The frame as a drag or a resize began.
     @State private var startFrame: CGRect?
 
@@ -92,9 +96,9 @@ private struct AppWindow: View {
     private var initialFrame: CGRect {
         let aspect: CGFloat = portrait ? 19.5 / 9 : 9 / 16
         var w = portrait ? min(container.width * 0.82, 380) : container.width - 24
-        var h = w * aspect + Self.bar
+        var h = w * aspect
         let maxH = container.height * (portrait ? 0.78 : 0.7)
-        if h > maxH { h = maxH; w = (h - Self.bar) / aspect }
+        if h > maxH { h = maxH; w = h / aspect }
         return CGRect(x: (container.width - w) / 2, y: (container.height - h) / 2.4, width: w, height: h)
     }
 
@@ -121,9 +125,9 @@ private struct AppWindow: View {
 
     var body: some View {
         let f = frame
-        VStack(spacing: 0) {
-            titleBar
+        ZStack(alignment: .top) {
             content
+            if showWindowChrome { titleBar }
         }
         .frame(width: f.width, height: f.height)
         .background(Color.black)
@@ -133,7 +137,7 @@ private struct AppWindow: View {
                 RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.primary.opacity(0.15), lineWidth: 0.5)
             }
         }
-        .overlay(alignment: .bottomTrailing) { if !windows.maximized { resizeHandle } }
+        .overlay(alignment: .bottomTrailing) { if !windows.maximized && showWindowChrome { resizeHandle } }
         .shadow(color: .black.opacity(windows.maximized ? 0 : 0.35), radius: 18, y: 6)
         .position(x: f.midX, y: f.midY)
         .onAppear {
@@ -154,11 +158,41 @@ private struct AppWindow: View {
                 stoppedWhy = d
                 GameStatusStore.shared.record(app.id, st == Int32(HUSK_UNITY_FAILED) ? .failed : .crashed, diagnosis: d)
             } else if st == Int32(HUSK_UNITY_FAILED) { GameStatusStore.shared.record(app.id, .failed) }
+            if st == Int32(HUSK_UNITY_ENDED) || st == Int32(HUSK_UNITY_FAILED) { appStopped = true }
         }
-        .onReceive(NotificationCenter.default.publisher(for: TLUnityUIView.appClosedItself)) { _ in windows.close() }
-        .overlay { if let d = stoppedWhy { AppStoppedOverlay(app: app, diagnosis: d) { windows.close() } } }
+        .onReceive(NotificationCenter.default.publisher(for: TLUnityUIView.appClosedItself)) { _ in appStopped = true }
+        .overlay {
+            if let d = stoppedWhy { AppStoppedOverlay(app: app, diagnosis: d) { windows.close() } }
+            else if appStopped { AppSessionStoppedNotice { windows.close() } }
+        }
         .onReceive(NotificationCenter.default.publisher(for: WebAppRuntime.closed)) { n in
-            if (n.object as? String) == app.id { windows.close() }
+            if (n.object as? String) == app.id { appStopped = true }
+        }
+        .background { AppControlsGesture(active: !showControls) { showControls = true } }
+        .overlay(alignment: .bottom) { AppControlsHint() }
+        .accessibilityAction(named: Text("App Controls")) { showControls = true }
+        .sheet(isPresented: $showControls, onDismiss: {
+            if keyboardRequested, let apk = app.apks.first {
+                keyboardRequested = false
+                TLUnityScreen.showKeyboard(apk: apk)
+            }
+        }) {
+            AppSessionControls(title: app.label, app: app, onReturn: { windows.close() }) {
+                Section {
+                    if app.report?.webKind == nil {
+                        Button { keyboardRequested = true; showControls = false } label: {
+                            Label("Show Keyboard", systemImage: "keyboard")
+                        }
+                    }
+                    Button { windows.minimize() } label: { Label("Minimize App", systemImage: "minus") }
+                    Button { windows.toggleMaximized(); showControls = false } label: {
+                        Label(windows.maximized ? "Restore Window" : "Maximize App", systemImage: "arrow.up.left.and.arrow.down.right")
+                    }
+                    if !windows.maximized {
+                        Button("Arrange Window") { showWindowChrome = true; showControls = false }
+                    }
+                }
+            }
         }
     }
 
@@ -211,8 +245,8 @@ private struct AppWindow: View {
             ItemIcon(item: .game(app), size: 18)
             Text(app.label).font(.footnote.weight(.semibold)).lineLimit(1)
             Spacer(minLength: 6)
-            // Balances the lights, so the name sits in the middle.
-            Color.clear.frame(width: 3 * 22 + 2 * 8, height: 1)
+            Button("Done") { showWindowChrome = false }
+                .font(.footnote.weight(.semibold))
         }
         .padding(.horizontal, 10)
         .frame(height: Self.bar)
@@ -328,10 +362,17 @@ struct TLWindowScreen: UIViewRepresentable {
     let maximumRenderEdge: Int
 
     func makeUIView(context: Context) -> TLWindowHost {
-        TLWindowHost(game: TLUnityScreen.view(apk: apk, extraApks: extraApks, dataDir: dataDir, engine: engine,
-                                              portrait: portrait, resolution: resolution, maximumRenderEdge: maximumRenderEdge))
+        let game = TLUnityScreen.view(apk: apk, extraApks: extraApks, dataDir: dataDir, engine: engine,
+                                     portrait: portrait, resolution: resolution, maximumRenderEdge: maximumRenderEdge)
+        game.onThreeFingerTap = nil // The window's scoped gesture presents its own controls.
+        game.onStats = nil
+        return TLWindowHost(game: game)
     }
-    func updateUIView(_ view: TLWindowHost, context: Context) { view.setNeedsLayout() }
+    func updateUIView(_ view: TLWindowHost, context: Context) {
+        view.game.onThreeFingerTap = nil
+        view.game.onStats = nil
+        view.setNeedsLayout()
+    }
 }
 
 final class TLWindowHost: UIView {
