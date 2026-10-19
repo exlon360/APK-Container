@@ -46,8 +46,9 @@ Verify on an actual iPhone/iPad:
 
 - Installation and launch, JIT activation, and available memory behavior.
 - APK import and launch, portrait/landscape layouts, native resolution, lower presets, and custom limits.
-- Touch and keyboard alignment, window resizing, and returning to fullscreen.
-- Runtime setup, app launch/exit, app permission screens, lockscreen/System UI interactions, rotation and transient focus recovery, and the foreground guard's transition back to the native library. Polling can briefly expose the Android launcher after an app exits.
+- Touch and keyboard alignment, releases outside a letterboxed image, window resizing, and returning to fullscreen.
+- Runtime display presets, Android density readback, and migration of old Device Maximum/50% selections on portrait and landscape windows. Check that a custom size remains custom and display changes take effect on the next boot.
+- Runtime setup, app launch/exit, app permission screens, lockscreen/System UI interactions, rotation and transient focus recovery without flashing the Apps library. Sustained Home focus should return to the library; transient Home should not. Polling can briefly expose the Android launcher after an app exits.
 
 No device performance improvement or universal APK compatibility is established by the build alone.
 
@@ -60,12 +61,14 @@ These regression checks run without a connected device:
 ```sh
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 sh tests/display-resolution/run.sh
+sh tests/runtime-display/run.sh
+sh tests/runtime-density/run.sh
 sh tests/android-presentation/run.sh
 sh tests/runtime-snapshot/run.sh
 git diff --check
 ```
 
-They cover phone and iPad sizes, rotation, legacy presets, custom limits, pixel-density consistency, direct app entry resolution without a HOME app, service restart recovery, cancellation, and runtime snapshot compatibility. Android command responses are mocked; these checks do not exercise UIKit or Android engines. The upstream translation-layer harness remains under `tools/regress/` and requires its own APK fixtures and reference images.
+They cover phone and iPad sizes, rotation, legacy presets, custom limits, pixel-density consistency and readback, aspect-fit input mapping, direct app entry resolution without a HOME app, cached focus ownership, transient and sustained Home, service restart recovery, cancellation, and runtime snapshot compatibility. Android command responses are mocked; these checks do not exercise UIKit or Android engines. The upstream translation-layer harness remains under `tools/regress/` and requires its own APK fixtures and reference images.
 
 ## Building the runtime from source
 

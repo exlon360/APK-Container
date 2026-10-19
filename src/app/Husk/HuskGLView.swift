@@ -17,6 +17,16 @@ final class HuskGLView: UIView {
     nonisolated(unsafe) static var layerForGL: CAMetalLayer?
     nonisolated(unsafe) static var pixelSize: CGSize = .zero
     nonisolated(unsafe) static var lastLandscape: Bool?
+    nonisolated(unsafe) private static var viewport: RuntimeDisplayConfiguration.Viewport?
+    nonisolated(unsafe) private static var deviceViewport: RuntimeDisplayConfiguration.Viewport?
+
+    nonisolated static func displayViewports() -> (window: RuntimeDisplayConfiguration.Viewport,
+                                                  device: RuntimeDisplayConfiguration.Viewport)? {
+        surfaceReady.lock()
+        defer { surfaceReady.unlock() }
+        guard let viewport, let deviceViewport else { return nil }
+        return (viewport, deviceViewport)
+    }
 
     /// The one view for the process.
     ///
@@ -37,8 +47,7 @@ final class HuskGLView: UIView {
     /// Guest resolution, for mapping touches back -- read from what QEMU was
     /// actually told rather than kept as a second copy here, which is how this
     /// came to claim 640 while the command line said 800.
-    private var guestWidth: CGFloat { CGFloat(QemuRunner.lastGuestRes.w) }
-    private var guestHeight: CGFloat { CGFloat(QemuRunner.lastGuestRes.h) }
+    private var pointer = RuntimeDisplayGeometry.Pointer()
 
     override class var layerClass: AnyClass { CAMetalLayer.self }
 
@@ -98,6 +107,13 @@ final class HuskGLView: UIView {
         let first = Self.layerForGL == nil
         Self.layerForGL = metalLayer
         Self.pixelSize = metalLayer.drawableSize
+        if bounds.width > 0, bounds.height > 0 {
+            let screen = window?.screen ?? UIScreen.main
+            Self.viewport = .init(width: Double(bounds.width), height: Double(bounds.height),
+                                  nativeScale: Double(screen.nativeScale))
+            Self.deviceViewport = .init(width: Double(screen.bounds.width), height: Double(screen.bounds.height),
+                                        nativeScale: Double(screen.nativeScale))
+        }
         Self.surfaceReady.broadcast()
         Self.surfaceReady.unlock()
 
@@ -208,30 +224,20 @@ final class HuskGLView: UIView {
     /// HuskMetalPresenter's vertex shader -- when they disagreed, the picture
     /// looked right and nothing responded where you tapped, which is a far more
     /// confusing failure than a picture that is visibly wrong.
-    private func guestPoint(from p: CGPoint) -> (Int32, Int32)? {
-        guard bounds.width > 0, bounds.height > 0,
-              guestWidth > 0, guestHeight > 0 else { return nil }
-
-        // What the guest occupies on screen, after any turn.
-        let effW = Self.rotated ? guestHeight : guestWidth
-        let effH = Self.rotated ? guestWidth  : guestHeight
-
-        let scale = min(bounds.width / effW, bounds.height / effH)
-        let drawW = effW * scale, drawH = effH * scale
-        let lx = (p.x - (bounds.width  - drawW) / 2) / scale
-        let ly = (p.y - (bounds.height - drawH) / 2) / scale
-        guard lx >= 0, ly >= 0, lx < effW, ly < effH else { return nil }
-
-        // The sampler reads at (1 - uv.y, uv.x) when turned; this is that,
-        // against the guest's own dimensions.
-        let gx = Self.rotated ? (1 - ly / effH) * guestWidth  : lx
-        let gy = Self.rotated ? (lx / effW) * guestHeight     : ly
-        guard gx >= 0, gy >= 0, gx < guestWidth, gy < guestHeight else { return nil }
-        return (Int32(gx), Int32(gy))
+    private func guestPoint(from p: CGPoint) -> RuntimeDisplayGeometry.Point? {
+        // Rendering uses the actual scanout, which can differ from boot argv
+        // after Android changes mode. Input must use the same aspect and turn.
+        guard let geometry = HuskMetalPresenter.shared.displayGeometry else { return nil }
+        return geometry.normalizedPoint(x: Double(p.x), y: Double(p.y),
+            viewWidth: Double(bounds.width), viewHeight: Double(bounds.height))
     }
 
     private func send(_ touch: UITouch, down: Bool) {
-        guard let (x, y) = guestPoint(from: touch.location(in: self)) else { return }
+        guard QemuRunner.qemuReady,
+              let point = pointer.update(point: guestPoint(from: touch.location(in: self)), down: down) else { return }
+        var width: Int32 = 0, height: Int32 = 0
+        husk_display_guest_size(&width, &height)
+        guard let (x, y) = RuntimeDisplayGeometry.pixels(point, width: width, height: height) else { return }
         husk_display_send_pointer(x, y, down)
     }
 

@@ -349,10 +349,17 @@ struct DisplayDefaultsSettingsView: View {
                 DetailRow(label: "Device pixels",
                           value: "\(Int(UIScreen.main.nativeBounds.width)) × \(Int(UIScreen.main.nativeBounds.height))")
             } header: {
-                Text("Android App Display")
+                Text("Native App Rendering")
             } footer: {
-                Text("\(APKDisplayResolution.defaultPreset.detail) The app uses the real iPhone or iPad display shape. "
+                Text("\(APKDisplayResolution.defaultPreset.detail) Applies to apps using the native renderer. "
                    + "A smaller pixel budget can reduce GPU and memory use; performance depends on the app and device.")
+            }
+            Section {
+                NavigationLink("Android Runtime Display & Input") { InputSettings() }
+                Text("Apps using the compatibility runtime share a separate panel and pixel budget. Change their resolution and interface size here.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            } header: {
+                Text("Compatibility Runtime")
             }
             Section {
                 Text("Open an app's settings to choose its orientation, a different resolution, or a custom longest-edge limit from 320 to 4096 pixels. "

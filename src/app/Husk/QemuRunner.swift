@@ -576,95 +576,31 @@ final class QemuRunner: ObservableObject {
         return nil
     }
 
-    /// Guest resolution, shaped like the screen it will be stretched onto.
-    ///
-    /// The blit scales the guest texture across the whole window with no regard
-    /// for aspect ratio, so a 360x640 guest (0.5625) drawn onto a 1206x2622
-    /// phone (0.460) comes out visibly squashed. Keeping the width at 360 --
-    /// the emulated cost is per pixel, and this is already the cheapest useful
-    /// size -- and deriving the height from the real screen makes the two
-    /// shapes agree, so nothing has to be letterboxed or distorted.
-    ///
-    /// Rounded to a multiple of 8: graphics stacks are happier with aligned
-    /// strides, and the error is under half a percent of the height.
-    private var guestResolution: (w: Int, h: Int) {
-        let r = computedGuestResolution
-        QemuRunner.lastGuestRes = r
-        return r
-    }
+    /// The panel and density selected for this running machine, captured once.
+    /// Settings changed mid-session apply at the next boot.
+    nonisolated(unsafe) private static var runningDisplay: RuntimeDisplayConfiguration?
+    nonisolated static var runtimeDisplayDensity: Int? { runningDisplay?.density }
+    nonisolated static var runtimeDisplaySummary: String { runningDisplay?.summary ?? "Not started" }
 
-    /// Whether the guest's panel is landscape-shaped.
-    ///
-    /// Android will not reshape a running panel -- every dpy_set_ui_info request
-    /// came back with the console unchanged -- so when an app asks for landscape
-    /// on a 360x800 panel, Android letterboxes it into a band across the middle.
-    /// Turning that band in the shader gives an upright picture that is mostly
-    /// black, which is exactly what "right orientation, just way too small"
-    /// describes.
-    ///
-    /// The panel's shape is fixed when the machine is created, so the honest fix
-    /// is to create it the other way round. That costs a cold boot, and it is
-    /// part of the machine stamp so a snapshot taken in one shape never tries to
-    /// restore into the other.
     nonisolated static var landscapeGuest: Bool {
-        UserDefaults.standard.bool(forKey: "husk.landscapeGuest")
+        RuntimeDisplayConfiguration.Preferences.current.orientation == .landscape
     }
 
-    /// A panel size chosen by hand, when there is one.
-    ///
-    /// It overrides everything below -- including the size pinned by a shipped
-    /// snapshot -- because someone who typed a resolution meant it. That does
-    /// mean the shipped snapshot cannot be used: it was captured against its
-    /// own panel, and a machine whose display differs is a different machine.
-    /// Nothing special is needed to arrange that, only the stamp: a custom size
-    /// changes it, the restore path already refuses a machine whose stamp does
-    /// not match, and the first launch after a change boots cold and saves a
-    /// new one.
     nonisolated static var customResolution: (w: Int, h: Int)? {
-        let d = UserDefaults.standard
-        guard d.bool(forKey: "husk.customRes") else { return nil }
-        return validResolution(w: d.integer(forKey: "husk.resWidth"),
-                               h: d.integer(forKey: "husk.resHeight"))
+        let device = HuskGLView.displayViewports()?.device ?? .fallback
+        let preferences = RuntimeDisplayConfiguration.Preferences.current.resolved(for: device)
+        guard preferences.preset == .custom else { return nil }
+        return validResolution(w: preferences.customWidth, h: preferences.customHeight)
     }
 
-    /// A size both QEMU and Android will accept, or nothing.
-    ///
-    /// Rounded to a multiple of eight because that is what the guest's
-    /// compositor wants its stride to be, and bounded because the two ends of
-    /// the range are both failures rather than preferences: below about 240 the
-    /// launcher has nowhere to lay itself out, and above 2560 a software-drawn
-    /// frame costs more than the emulator can deliver in a second.
     nonisolated static func validResolution(w: Int, h: Int) -> (w: Int, h: Int)? {
-        guard w >= 240, w <= 2560, h >= 240, h <= 2560 else { return nil }
-        return (Int((Double(w) / 8).rounded()) * 8, Int((Double(h) / 8).rounded()) * 8)
+        RuntimeDisplayConfiguration.validCustom(width: w, height: h).map { ($0.width, $0.height) }
     }
 
-    private var computedGuestResolution: (w: Int, h: Int) {
-        if let custom = QemuRunner.customResolution { return custom }
-
-        // A shipped snapshot fixes the resolution: it was saved against one,
-        // and a machine whose display differs is a different machine.
-        if GuestImage.shared.hasShippedSnapshot, !QemuRunner.landscapeGuest {
-            // From the manifest the snapshot was published with, not a constant
-            // compiled into this build -- an app older than a snapshot cannot
-            // know the machine it was saved on.
-            let pins = GuestImage.shared.snapshotPins
-            return (pins.xres, pins.yres)
-        }
-        if QemuRunner.landscapeGuest {
-            // The shipped snapshot's own panel, turned. Keeping the same pixel
-            // count means the same memory footprint and the same load on TCG;
-            // only the shape changes.
-            let pins = GuestImage.shared.snapshotPins
-            let short = min(pins.xres, pins.yres), long = max(pins.xres, pins.yres)
-            return (long, short)
-        }
-        let size = HuskGLView.pixelSize
-        guard size.width > 0, size.height > 0 else { return (360, 640) }
-        let w = 360
-        let exact = Double(w) * Double(size.height) / Double(size.width)
-        let h = max(480, Int((exact / 8).rounded()) * 8)
-        return (w, h)
+    private var nextDisplayConfiguration: RuntimeDisplayConfiguration {
+        let viewports = HuskGLView.displayViewports()
+        return RuntimeDisplayConfiguration.make(viewport: viewports?.window ?? .fallback,
+            preferences: .current, legacyDevice: viewports?.device)
     }
 
     private var machineCpu: String {
@@ -809,6 +745,10 @@ final class QemuRunner: ObservableObject {
     private func phase1Arguments() -> [String] {
         let guest = GuestImage.shared
         let memMiB = guestMemoryMiB()
+        let panel = nextDisplayConfiguration
+        QemuRunner.runningDisplay = panel
+        QemuRunner.lastGuestRes = (panel.width, panel.height)
+        HuskLog.log("qemu", "runtime panel \(panel.summary); device-aspect budget and Android density captured for this boot")
 
         // Modelled on android-lineage-qemu's own documented qemu-system line for
         // the arm64only build, because that is the configuration the image is
@@ -921,8 +861,8 @@ final class QemuRunner: ObservableObject {
             // console requires a GL context". Falling back has to mean not
             // asking for the GL device in the first place.
             "-device", QemuRunner.glProven
-                ? "virtio-gpu-gl-pci,xres=\(guestResolution.w),yres=\(guestResolution.h)"
-                : "virtio-gpu-pci,xres=\(guestResolution.w),yres=\(guestResolution.h)",
+                ? "virtio-gpu-gl-pci,xres=\(panel.width),yres=\(panel.height)"
+                : "virtio-gpu-pci,xres=\(panel.width),yres=\(panel.height)",
 
             // USB HID rather than virtio-input, which is what their config uses.
             // Every Android kernel has usbhid; virtio-input is not guaranteed,
@@ -983,6 +923,7 @@ final class QemuRunner: ObservableObject {
             return
         }
         isRunning = true
+        QemuRunner.runningDisplay = nil
         startedAt = Date()
         QemuRunner.bootStarted = Date()
 

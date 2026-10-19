@@ -36,11 +36,15 @@ struct ContentView: View {
     @ObservedObject private var crash = CrashReport.shared
     @ObservedObject private var massTest = MassTest.shared
 
+    /// The native session stays on screen through Android window transitions.
+    /// Focus permission controls guest pixels and input, not the route back to Apps.
+    private var appSessionPresented: Bool {
+        showGuestScreen && started && runner.isRunning && host.presentationActive
+    }
+
     /// Guest pixels are exposed only after the host validates an app foreground.
-    /// Keep its Metal surface mounted while hidden so the renderer remains live.
     private var appSurfaceVisible: Bool {
-        scenePhase == .active && showGuestScreen && started && runner.isRunning
-            && host.presentationActive && host.appSurfaceAllowed
+        scenePhase == .active && appSessionPresented && host.appSurfaceAllowed
     }
 
     var body: some View {
@@ -63,10 +67,10 @@ struct ContentView: View {
                     .tabItem { Label("Settings", systemImage: "gearshape.fill") }
                     .tag(HuskTab.settings)
             }
-            .opacity(appSurfaceVisible ? 0 : 1)
-            .allowsHitTesting(!appSurfaceVisible)
-            .accessibilityHidden(appSurfaceVisible)
-            .animation(nil, value: appSurfaceVisible)
+            .opacity(appSessionPresented ? 0 : 1)
+            .allowsHitTesting(!appSessionPresented)
+            .accessibilityHidden(appSessionPresented)
+            .animation(nil, value: appSessionPresented)
 
             // Multitasking: an app in a window over everything else in Husk (AppWindows.swift).
             AppWindowLayer()
@@ -93,13 +97,14 @@ struct ContentView: View {
 
             if started && runner.isRunning {
                 GuestScreenView(showLogs: $showLogs,
-                                isPresented: appSurfaceVisible,
+                                isPresented: appSessionPresented,
+                                pixelsAllowed: appSurfaceVisible,
                                 chromeHidden: false,
                                 onBack: endAppPresentation)
-                    .opacity(appSurfaceVisible ? 1 : 0)
-                    .allowsHitTesting(appSurfaceVisible)
-                    .accessibilityHidden(!appSurfaceVisible)
-                    .animation(nil, value: appSurfaceVisible)
+                    .opacity(appSessionPresented ? 1 : 0)
+                    .allowsHitTesting(appSessionPresented)
+                    .accessibilityHidden(!appSessionPresented)
+                    .animation(nil, value: appSessionPresented)
             }
 
             // Over the tabs and over the start screen: when Husk is starting
@@ -151,9 +156,8 @@ struct ContentView: View {
         .onChange(of: host.busy) { _ in resumeRuntimeRequests() }
         .onChange(of: host.presentationActive) { active in
             // Focus can disappear temporarily during an activity transition.
-            // Cover the guest through appSurfaceVisible without losing its route;
-            // only ending the presentation returns permanently to Apps.
-            if !active { showGuestScreen = false }
+            // Start with the native cover and keep this route until the session ends.
+            showGuestScreen = active
         }
         .onChange(of: guest.state) { state in
             if state == .ready, runtimeRequested || !incoming.forAndroid.isEmpty {
@@ -375,7 +379,10 @@ struct ContentView: View {
 struct GuestScreenView: View {
     @ObservedObject private var runner = QemuRunner.shared
     @Binding var showLogs: Bool
+    /// Session lifecycle: transient focus changes must not close native controls.
     var isPresented: Bool
+    /// Only verified guest pixels may be shown or receive input.
+    var pixelsAllowed: Bool
     /// True while another tab is covering this one, so the guest's own controls
     /// are not drawn on top of a settings list.
     var chromeHidden = false
@@ -399,6 +406,8 @@ struct GuestScreenView: View {
             // display goes on top and takes over. Without this the fallback is
             // invisible: the log says it fell back and the screen stays black.
             HuskGLScreen().ignoresSafeArea()
+                .allowsHitTesting(pixelsAllowed)
+                .accessibilityHidden(!pixelsAllowed)
             // Only once GL is known to have FAILED. While the answer is
             // still undecided this must draw nothing: HuskDisplay is opaque,
             // and putting it over the GL layer on the chance that GL might not
@@ -406,6 +415,31 @@ struct GuestScreenView: View {
             // nothing to show.
             if runner.displayKind == .software {
                 HuskDisplay().ignoresSafeArea()
+                    .allowsHitTesting(pixelsAllowed)
+                    .accessibilityHidden(!pixelsAllowed)
+            }
+
+            // Keep the renderer and its geometry in place. An opaque native cover
+            // hides unverified Android windows without dropping back to the library.
+            if !pixelsAllowed {
+                ZStack {
+                    Color.black.ignoresSafeArea()
+                    VStack(spacing: 14) {
+                        Spacer()
+                        ProgressView().tint(.white)
+                        Text("Waiting for Android…")
+                            .font(.callout)
+                            .foregroundStyle(.white)
+                        Button(action: onBack) {
+                            Label("Back to Apps", systemImage: "chevron.left")
+                        }
+                        .buttonStyle(.bordered)
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .transition(.identity)
+                .animation(nil, value: pixelsAllowed)
             }
 
             // Boot progress, over the guest's own screen.
@@ -437,8 +471,8 @@ struct GuestScreenView: View {
 
             // Zero-sized: it exists only to hold first-responder status, which is
             // what both the on-screen keyboard and hardware key events depend on.
-            KeyCapture(active: Binding(get: { isPresented && keyboard },
-                                       set: { keyboard = isPresented && $0 }))
+            KeyCapture(active: Binding(get: { isPresented && pixelsAllowed && keyboard },
+                                       set: { if isPresented && pixelsAllowed { keyboard = $0 } }))
                 .frame(width: 0, height: 0)
 
             // The controls, as one pill at the bottom.
@@ -454,6 +488,7 @@ struct GuestScreenView: View {
 
                     if keyboard {
                         SpecialKeysBar()
+                            .disabled(!pixelsAllowed)
                             .padding(.horizontal, 10).padding(.vertical, 8)
                             .huskPanel(RoundedRectangle(cornerRadius: 14,
                                                         style: .continuous))

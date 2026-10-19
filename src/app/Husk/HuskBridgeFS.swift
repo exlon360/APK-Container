@@ -935,6 +935,20 @@ final class AndroidHost: ObservableObject {
                     let booted = try GuestBridge.shared.shell("getprop sys.boot_completed")
                         .trimmingCharacters(in: .whitespacesAndNewlines)
                     if booted == "1" {
+                        // Set density before readiness allows any app to launch. Do this once
+                        // per runtime boot, not on activity changes (which would recreate apps).
+                        if let density = QemuRunner.runtimeDisplayDensity {
+                            do {
+                                let changed = try RuntimeDisplayDensity.reconcile(target: density) {
+                                    try AndroidAppPresentation.execute($0, timeout: $1) {
+                                        try GuestBridge.shared.run($0, timeout: $1)
+                                    }
+                                }
+                                HuskLog.log("display", "\(QemuRunner.runtimeDisplaySummary); density \(density) \(changed ? "applied" : "already set")")
+                            } catch {
+                                HuskLog.log("display", "Could not apply Android UI density: \(error.localizedDescription)")
+                            }
+                        }
                         await MainActor.run {
                             self?.isReady = true
                             self?.status = "Android is ready"
@@ -1773,10 +1787,11 @@ final class AndroidHost: ObservableObject {
                     cancelled: { Task.isCancelled },
                     pause: { try await Task.sleep(nanoseconds: 2_000_000_000) },
                     log: { HuskLog.log("bridge", $0) })
+                let probe = AndroidAppPresentation.Probe()
                 try await AndroidAppPresentation.monitor(
                     requested: pkg, session: session, installedPackages: installed,
                     allowSettings: settings,
-                    read: { try AndroidAppPresentation.observe(run: { try GuestBridge.shared.run($0, timeout: $1) }) },
+                    read: { try probe.observe(run: { try GuestBridge.shared.run($0, timeout: $1) }) },
                     now: { ProcessInfo.processInfo.systemUptime },
                     pause: { interval in try await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000)) },
                     cancelled: { Task.isCancelled },

@@ -34,6 +34,14 @@ final class HuskMetalPresenter {
     private let lock = NSLock()
     private var complained = false
     private var presented: UInt64 = 0
+    private let geometryLock = NSLock()
+    private var lastGeometry: RuntimeDisplayGeometry?
+
+    var displayGeometry: RuntimeDisplayGeometry? {
+        geometryLock.lock()
+        defer { geometryLock.unlock() }
+        return lastGeometry
+    }
 
     /// Whether the guest's picture needs a quarter turn to match the screen.
     /// Set by HuskGLView when the device orientation changes, and read on
@@ -159,11 +167,12 @@ final class HuskMetalPresenter {
         guard let buffer = queue.makeCommandBuffer(),
               let encoder = buffer.makeRenderCommandEncoder(descriptor: pass) else { return }
 
+        let frameRotated = rotated
         // Letterbox rather than stretch. The guest occupies effW x effH on
         // screen once any turn is applied; whichever axis runs out first sets
         // the scale, and the other is inset.
-        let effW = Float(rotated ? texture.height : texture.width)
-        let effH = Float(rotated ? texture.width  : texture.height)
+        let effW = Float(frameRotated ? texture.height : texture.width)
+        let effH = Float(frameRotated ? texture.width  : texture.height)
         let layerW = Float(layer.drawableSize.width)
         let layerH = Float(layer.drawableSize.height)
         var sx: Float = 1, sy: Float = 1
@@ -174,7 +183,7 @@ final class HuskMetalPresenter {
             else                         { sx = guestAspect / layerAspect }
         }
 
-        var params = (flip: Float(flip ? 1 : 0), rotate: Float(rotated ? 1 : 0),
+        var params = (flip: Float(flip ? 1 : 0), rotate: Float(frameRotated ? 1 : 0),
                       sx: sx, sy: sy)
         encoder.setRenderPipelineState(pipeline)
         encoder.setVertexBytes(&params, length: MemoryLayout<Float>.size * 4, index: 0)
@@ -188,6 +197,10 @@ final class HuskMetalPresenter {
         // in which the GPU reads it.
         buffer.present(drawable)
         buffer.commit()
+        geometryLock.lock()
+        lastGeometry = RuntimeDisplayGeometry(width: Double(texture.width),
+                                              height: Double(texture.height), rotated: frameRotated)
+        geometryLock.unlock()
 
         presented &+= 1
         if presented == 1 || presented % 1800 == 0 {

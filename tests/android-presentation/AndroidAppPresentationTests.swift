@@ -86,17 +86,104 @@ struct AndroidAppPresentationTests {
         """
     }
 
+    static func reportParts(_ report: String) -> (focus: String, owners: String) {
+        let divider = report.range(of: "WINDOW MANAGER WINDOWS")!
+        return (String(report[..<divider.lowerBound]), String(report[divider.lowerBound...]))
+    }
+
+    static func probeChecks() throws {
+        let appReport = reportParts(windowReport(owner: pkg, title: "Arbitrary title without a slash"))
+        let homeReport = reportParts(windowReport(owner: "com.example.home", title: "Home")
+            .replacingOccurrences(of: "abc123", with: "def456"))
+        let nullReport = reportParts(windowReport(owner: pkg, focus: "null"))
+        let probe = AP.Probe()
+        let bridge = MockBridge([
+            Step(AP.focusCommand, appReport.focus), Step(AP.ownershipCommand, appReport.owners),
+            // An unchanged WindowState needs one fresh focus read, not another full owner dump.
+            Step(AP.focusCommand, appReport.focus), Step(AP.focusCommand, appReport.focus),
+            // A different window must never inherit the previous app's verified ownership.
+            Step(AP.focusCommand, homeReport.focus), Step(AP.ownershipCommand, homeReport.owners),
+            Step(AP.focusCommand, nullReport.focus),
+            // Even the same identity is revalidated after an intervening null focus.
+            Step(AP.focusCommand, homeReport.focus), Step(AP.ownershipCommand, homeReport.owners),
+        ])
+        for expected in [pkg, pkg, pkg, "com.example.home", nil, "com.example.home"] as [String?] {
+            let result = try probe.observe(run: bridge.run)
+            precondition(result.package == expected)
+        }
+        bridge.finished()
+        precondition(bridge.commands.filter { $0 == AP.ownershipCommand }.count == 3)
+
+        // Activity changes can race the two dumps. Cover a mismatched pair, then recover using
+        // a fresh matching pair; the failed ownership must never enter the cache.
+        let raced = AP.Probe()
+        let raceBridge = MockBridge([
+            Step(AP.focusCommand, appReport.focus), Step(AP.ownershipCommand, homeReport.owners),
+            Step(AP.focusCommand, homeReport.focus), Step(AP.ownershipCommand, homeReport.owners),
+        ])
+        let unmatched = try raced.observe(run: raceBridge.run)
+        precondition(unmatched.state == .unrecognized)
+        let matched = try raced.observe(run: raceBridge.run)
+        precondition(matched.package == "com.example.home")
+        raceBridge.finished()
+
+        // Nonzero status, a malformed focus, and a thrown read all invalidate cached ownership.
+        for badRead in [Step(AP.focusCommand, "Can't find service: window", status: 1),
+                        Step(AP.focusCommand, "unrecognized display response"),
+                        Step(AP.focusCommand, "", fail: true)] {
+            let recovering = AP.Probe()
+            let badBridge = MockBridge([
+                Step(AP.focusCommand, appReport.focus), Step(AP.ownershipCommand, appReport.owners),
+                badRead,
+                Step(AP.focusCommand, appReport.focus), Step(AP.ownershipCommand, appReport.owners),
+            ])
+            let before = try recovering.observe(run: badBridge.run)
+            precondition(before.package == pkg)
+            do {
+                let failed = try recovering.observe(run: badBridge.run)
+                precondition(failed.package == nil)
+                precondition(!badRead.fail)
+            } catch { precondition(badRead.fail) }
+            let after = try recovering.observe(run: badBridge.run)
+            precondition(after.package == pkg)
+            badBridge.finished()
+        }
+
+        let failedOwner = AP.Probe()
+        let ownerBridge = MockBridge([
+            Step(AP.focusCommand, appReport.focus), Step(AP.ownershipCommand, "service stopped", status: 1),
+            Step(AP.focusCommand, appReport.focus), Step(AP.ownershipCommand, appReport.owners),
+        ])
+        let ownerFailure = try failedOwner.observe(run: ownerBridge.run)
+        precondition(ownerFailure.state == .readFailure)
+        let ownerRecovery = try failedOwner.observe(run: ownerBridge.run)
+        precondition(ownerRecovery.package == pkg)
+        ownerBridge.finished()
+
+        let oneShot = MockBridge([Step(AP.focusCommand, appReport.focus), Step(AP.ownershipCommand, appReport.owners)])
+        let observed = try AP.observe(run: oneShot.run)
+        precondition(observed.package == pkg); oneShot.finished()
+    }
+
     final class Timeline {
         var observations: [AP.Observation]
         var time: TimeInterval = 0
         var events: [String] = []
+        var visiblePackages: [String] = []
+        var coveredTimes: [TimeInterval] = []
         var readCount = 0
         var cancel = false
         var cancelOnCover = false
         var throwFirstRead = false
+        var homesVerified = true
+        var transitions: [String] {
+            events.reduce(into: []) { result, event in
+                if result.last != event { result.append(event) }
+            }
+        }
         init(_ observations: [AP.Observation]) { self.observations = observations }
         func run() async throws {
-            try await AP.monitor(requested: pkg, session: AP.Session(homePackages: ["com.example.home"], homesVerified: true),
+            try await AP.monitor(requested: pkg, session: AP.Session(homePackages: ["com.example.home"], homesVerified: homesVerified),
                                  installedPackages: [pkg, "com.example.browser", "com.example.home"], allowSettings: false,
                                  read: {
                 self.readCount += 1
@@ -106,9 +193,12 @@ struct AndroidAppPresentationTests {
                 return value
             }, now: { self.time }, pause: { self.time += $0 }, cancelled: { self.cancel }, event: { event in
                 switch event {
-                case .visible: self.events.append("visible")
+                case .visible(let observation):
+                    self.events.append("visible")
+                    self.visiblePackages.append(observation.package!)
                 case .covered:
                     self.events.append("covered")
+                    self.coveredTimes.append(self.time)
                     if self.cancelOnCover { self.cancel = true }
                 case .returnedHome: self.events.append("home")
                 case .timedOut(let observation):
@@ -136,28 +226,26 @@ struct AndroidAppPresentationTests {
         precondition(AP.observation(otherDisplay).package == pkg)
         let ambiguous = windowReport(owner: pkg) + "\n  Window #1 Window{abc123 u0 duplicate}:\n    mDisplayId=0\n    mOwnerUid=1000 package=com.android.systemui appop=NONE"
         precondition(AP.observation(ambiguous).state == .unrecognized)
-        let probe = MockBridge([Step(AP.foregroundCommand, windowReport(owner: pkg, title: "Arbitrary title without a slash"))])
-        let observed = try AP.observe(run: probe.run)
-        precondition(observed.package == pkg); probe.finished()
-        let failedProbe = MockBridge([Step(AP.foregroundCommand, "Can't find service: window", status: 1)])
-        let failedObservation = try AP.observe(run: failedProbe.run)
-        precondition(failedObservation.state == .readFailure); failedProbe.finished()
         precondition(AP.observation(String(repeating: "bad response ", count: 1000)).diagnostic.count <= 700)
+        try probeChecks()
 
-        // The tested monitor is the same loop AndroidHost uses. An initial old HOME stays covered.
+        // The tested monitor is the production loop. Initial HOME/null stays covered; only a
+        // sustained HOME after the requested app appears can end the native presentation session.
         let initial = Timeline([home, unknown, app, home])
         try await initial.run()
-        precondition(initial.events == ["covered", "covered", "visible", "home"])
+        precondition(initial.transitions == ["covered", "visible", "covered", "home"])
+        precondition(initial.visiblePackages == [pkg])
         let recovered = Timeline([app, unknown, app, home])
         try await recovered.run()
-        precondition(recovered.events == ["visible", "covered", "visible", "home"])
+        precondition(recovered.transitions == ["visible", "covered", "visible", "covered", "home"])
         let serviceRecovery = Timeline([app, home])
         serviceRecovery.throwFirstRead = true
         try await serviceRecovery.run()
-        precondition(serviceRecovery.events == ["covered", "visible", "home"])
+        precondition(serviceRecovery.transitions == ["covered", "visible", "covered", "home"])
         let lockedRecovery = Timeline([app, locked, unknown, app, home])
         try await lockedRecovery.run()
-        precondition(lockedRecovery.events == ["visible", "visible", "covered", "visible", "home"])
+        precondition(lockedRecovery.visiblePackages == [pkg, "com.android.systemui", pkg])
+        precondition(lockedRecovery.transitions == ["visible", "covered", "visible", "covered", "home"])
         for observation in [unknown, AP.observation("unknown report")] {
             let timeout = Timeline([observation])
             try await timeout.run()
@@ -173,17 +261,61 @@ struct AndroidAppPresentationTests {
         do { try await cancelled.run(); preconditionFailure("Expected monitor cancellation") }
         catch is CancellationError {} catch { preconditionFailure("Wrong monitor cancellation") }
         precondition(cancelled.events == ["covered"] && cancelled.readCount == 1)
-        for owner in ["com.android.settings", "android", "com.android.permissioncontroller", "com.android.systemui"] {
+        for owner in ["com.android.settings", "android", "com.android.permissioncontroller", "com.android.systemui",
+                      "org.lineageos.setupwizard", "com.vendor.nonCatalogActivity"] {
             let dialog = AP.observation(windowReport(owner: owner, title: "Permission or error dialog"))
             let handoff = Timeline([app, dialog, app, home])
             try await handoff.run()
-            precondition(handoff.events == ["visible", "visible", "visible", "home"])
+            precondition(handoff.visiblePackages == [pkg, owner, pkg])
+            precondition(handoff.transitions == ["visible", "covered", "home"])
         }
+        let uncataloged = AP.observation(windowReport(owner: "org.lineageos.setupwizard"))
+        let unverifiedHandoff = Timeline([app, uncataloged, app, home])
+        unverifiedHandoff.homesVerified = false
+        try await unverifiedHandoff.run()
+        precondition(unverifiedHandoff.visiblePackages == [pkg, pkg])
+        precondition(unverifiedHandoff.transitions == ["visible", "covered", "visible", "covered", "home"])
+        let initialHandoff = Timeline([uncataloged, app, home])
+        try await initialHandoff.run()
+        precondition(initialHandoff.visiblePackages == [pkg])
+        precondition(initialHandoff.events.first == "covered")
+
+        // Recorded device transitions lose focus for 1–3 seconds while opening permissions/settings.
+        // Multiple such changes recover in one session, without a terminal event in between.
+        let settings = AP.observation(windowReport(owner: "com.android.settings", title: "Settings"))
+        let activityChanges = Timeline([app, unknown, unknown, app, unknown, unknown, settings,
+                                        unknown, app, home])
+        try await activityChanges.run()
+        precondition(activityChanges.visiblePackages == [pkg, pkg, "com.android.settings", pkg])
+        precondition(activityChanges.events.filter { $0 == "home" || $0 == "timeout" } == ["home"])
+        // A slow but bounded activity transition also retains the session.
+        let slowTransition = Timeline([app] + Array(repeating: unknown, count: 25) + [app, home])
+        try await slowTransition.run()
+        precondition(slowTransition.visiblePackages == [pkg, pkg] && slowTransition.events.last == "home")
+
+        // Brief HOME flashes are covered immediately but do not discard the running app.
+        let transientHome = Timeline([app, home, home, app, home])
+        try await transientHome.run()
+        precondition(transientHome.visiblePackages == [pkg, pkg])
+        precondition(transientHome.coveredTimes.first == 1)
+        precondition(transientHome.time >= 7 && transientHome.time < 8)
+        let interruptedHome = Timeline([app, home, unknown, home, unknown, app, home])
+        try await interruptedHome.run()
+        precondition(interruptedHome.visiblePackages == [pkg, pkg])
+        precondition(interruptedHome.time >= 9 && interruptedHome.time < 10)
+        let sustainedHome = Timeline([app, home])
+        try await sustainedHome.run()
+        precondition(sustainedHome.visiblePackages == [pkg])
+        precondition(sustainedHome.coveredTimes.first == 1)
+        precondition(sustainedHome.time - sustainedHome.coveredTimes.first! >= 3)
+        precondition(sustainedHome.transitions == ["visible", "covered", "home"])
+
         // This is the device's actual blocked window: a SystemUI-owned NotificationShade.
         let notificationShade = AP.observation(windowReport(owner: "com.android.systemui", title: "NotificationShade"))
         let initialUnlock = Timeline([notificationShade, home, app, home])
         try await initialUnlock.run()
-        precondition(initialUnlock.events == ["visible", "covered", "visible", "home"])
+        precondition(initialUnlock.visiblePackages == ["com.android.systemui", pkg])
+        precondition(initialUnlock.transitions == ["visible", "covered", "visible", "covered", "home"])
         let settingsPermission = AP.observation(windowReport(owner: "com.android.settings", title: "Permission dialog",
             focusedApp: "com.android.settings/.Settings$AppManageExternalStorageActivity"))
         precondition(!AP.isHome(settingsPermission.package, component: settingsPermission.component,
@@ -200,11 +332,13 @@ struct AndroidAppPresentationTests {
                                     component: fallback.component))
             let fallbackExit = Timeline([app, fallback])
             try await fallbackExit.run()
-            precondition(fallbackExit.events == ["visible", "home"])
+            precondition(fallbackExit.transitions == ["visible", "covered", "home"])
+            precondition(fallbackExit.visiblePackages == [pkg])
         }
         let customHome = Timeline([app, mislabeled])
         try await customHome.run()
-        precondition(customHome.events == ["visible", "home"])
+        precondition(customHome.transitions == ["visible", "covered", "home"])
+        precondition(customHome.visiblePackages == [pkg])
     }
 
     static func main() async throws {
@@ -226,7 +360,7 @@ struct AndroidAppPresentationTests {
         precondition(AP.observation(windowReport(owner: pkg, focus: "null")).state == .noFocus)
         precondition(AP.observation("window service unavailable").state == .readFailure)
         precondition(allowed(pkg, launching: true))
-        for denied in [nil, "org.lineageos.trebuchet", "com.example.launcher", "com.android.launcher3", "com.unknown.app"] as [String?] {
+        for denied in [nil, "org.lineageos.trebuchet", "com.example.launcher", "com.android.launcher3"] as [String?] {
             precondition(!allowed(denied))
         }
         precondition(allowed("com.android.permissioncontroller", launching: true))
@@ -238,6 +372,9 @@ struct AndroidAppPresentationTests {
         precondition(allowed("com.android.systemui", launching: true))
         precondition(!allowed("com.example.browser", launching: true))
         precondition(allowed("com.example.browser"))
+        precondition(allowed("com.unknown.app"))
+        precondition(!allowed("com.unknown.app", launching: true))
+        precondition(!allowed("com.unknown.app", verified: false))
         precondition(allowed(pkg, launching: true, homePackages: []))
         precondition(allowed(pkg, launching: true, homePackages: [], verified: false))
         precondition(!allowed("com.example.launcher", homePackages: [], verified: false))

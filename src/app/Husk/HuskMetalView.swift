@@ -19,6 +19,7 @@ final class HuskMetalView: MTKView {
     /// Guest surface size, for mapping touches back into guest coordinates.
     private var guestWidth: Int32 = 0
     private var guestHeight: Int32 = 0
+    private var pointer = RuntimeDisplayGeometry.Pointer()
 
     init() {
         let dev = MTLCreateSystemDefaultDevice()
@@ -57,26 +58,18 @@ final class HuskMetalView: MTKView {
 
     /// Map a view-space point into guest pixels, honouring the aspect-fit letterbox
     /// that `draw(in:)` produces.
-    private func guestPoint(from p: CGPoint) -> (Int32, Int32)? {
-        guard guestWidth > 0, guestHeight > 0, bounds.width > 0, bounds.height > 0 else {
-            return nil
-        }
-        let scale = min(bounds.width / CGFloat(guestWidth), bounds.height / CGFloat(guestHeight))
-        let drawW = CGFloat(guestWidth) * scale
-        let drawH = CGFloat(guestHeight) * scale
-        let originX = (bounds.width - drawW) / 2
-        let originY = (bounds.height - drawH) / 2
-
-        let gx = (p.x - originX) / scale
-        let gy = (p.y - originY) / scale
-        guard gx >= 0, gy >= 0, gx < CGFloat(guestWidth), gy < CGFloat(guestHeight) else {
-            return nil
-        }
-        return (Int32(gx), Int32(gy))
+    private func guestPoint(from p: CGPoint) -> RuntimeDisplayGeometry.Point? {
+        RuntimeDisplayGeometry(width: Double(guestWidth), height: Double(guestHeight), rotated: false)
+            .normalizedPoint(x: Double(p.x), y: Double(p.y),
+                             viewWidth: Double(bounds.width), viewHeight: Double(bounds.height))
     }
 
     private func send(_ touch: UITouch, down: Bool) {
-        guard let (x, y) = guestPoint(from: touch.location(in: self)) else { return }
+        guard QemuRunner.qemuReady,
+              let point = pointer.update(point: guestPoint(from: touch.location(in: self)), down: down) else { return }
+        var width: Int32 = 0, height: Int32 = 0
+        husk_display_guest_size(&width, &height)
+        guard let (x, y) = RuntimeDisplayGeometry.pixels(point, width: width, height: height) else { return }
         husk_display_send_pointer(x, y, down)
     }
 

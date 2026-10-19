@@ -301,168 +301,123 @@ struct PerformanceSettings: View {
 // MARK: - Input
 
 struct InputSettings: View {
-    @State private var landscapeGuest =
-        UserDefaults.standard.bool(forKey: "husk.landscapeGuest")
-    @State private var customRes = UserDefaults.standard.bool(forKey: "husk.customRes")
-    @State private var widthText = InputSettings.stored("husk.resWidth", InputSettings.deviceSize().w)
-    @State private var heightText = InputSettings.stored("husk.resHeight", InputSettings.deviceSize().h)
+    @State private var preset: RuntimeDisplayConfiguration.Preset
+    @State private var orientation: RuntimeDisplayConfiguration.Orientation
+    @State private var widthText: String
+    @State private var heightText: String
+    @State private var viewport: RuntimeDisplayConfiguration.Viewport
 
-    /// The fallback Android runtime has a smaller pixel budget than the native app renderer.
-    private static func deviceSize(fraction: CGFloat = 1, landscape: Bool = QemuRunner.landscapeGuest) -> (w: Int, h: Int) {
-        let screen = UIScreen.main
-        let short = min(screen.bounds.width, screen.bounds.height), long = max(screen.bounds.width, screen.bounds.height)
-        guard let size = APKDisplayResolution.surface(width: Double(landscape ? long : short),
-                                                      height: Double(landscape ? short : long),
-                                                      nativeScale: Double(screen.nativeScale * fraction),
-                                                      preset: .custom, maximumEdge: 2560),
-              let valid = QemuRunner.validResolution(w: size.width, h: size.height) else { return (720, 1280) }
-        return valid
+    init() {
+        let metrics = Self.viewports()
+        let preferences = RuntimeDisplayConfiguration.Preferences.current.resolved(for: metrics.device)
+        _preset = State(initialValue: preferences.preset)
+        _orientation = State(initialValue: preferences.orientation)
+        _widthText = State(initialValue: String(preferences.customWidth > 0 ? preferences.customWidth : 720))
+        _heightText = State(initialValue: String(preferences.customHeight > 0 ? preferences.customHeight : 1280))
+        _viewport = State(initialValue: metrics.window)
     }
 
-    private var presets: [(name: String, w: Int, h: Int)] {
-        let native = Self.deviceSize(landscape: landscapeGuest)
-        let balanced = Self.deviceSize(fraction: 0.5, landscape: landscapeGuest)
-        return [
-            ("Device maximum — \(native.w) × \(native.h)", native.w, native.h),
-            ("Device 50% — \(balanced.w) × \(balanced.h)", balanced.w, balanced.h),
-            ("Phone — 720 × 1280", 720, 1280),
-            ("Landscape — 1280 × 720", 1280, 720),
-            ("iPad 4:3 — 1024 × 768", 1024, 768),
-        ]
+    private static func viewports() -> (window: RuntimeDisplayConfiguration.Viewport,
+                                       device: RuntimeDisplayConfiguration.Viewport) {
+        let window = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows).first(where: \.isKeyWindow)
+        let screen = window?.screen ?? UIScreen.main
+        let bounds = window?.bounds ?? screen.bounds
+        return (.init(width: Double(bounds.width), height: Double(bounds.height), nativeScale: Double(screen.nativeScale)),
+                .init(width: Double(screen.bounds.width), height: Double(screen.bounds.height), nativeScale: Double(screen.nativeScale)))
     }
 
-    private static func stored(_ key: String, _ fallback: Int) -> String {
-        let v = UserDefaults.standard.integer(forKey: key)
-        return String(v > 0 ? v : fallback)
-    }
-
-    /// What the typed numbers actually come to, or nothing if they are not a
-    /// size the guest can be given.
-    private var effective: (w: Int, h: Int)? {
+    private var custom: (w: Int, h: Int)? {
         QemuRunner.validResolution(w: Int(widthText) ?? 0, h: Int(heightText) ?? 0)
     }
 
+    private var preview: RuntimeDisplayConfiguration {
+        .make(viewport: viewport, preferences: .init(preset: preset, orientation: orientation,
+            customWidth: Int(widthText) ?? 0, customHeight: Int(heightText) ?? 0))
+    }
+
     var body: some View {
-        Form {
-            Section {
-                Picker("Screen", selection: $landscapeGuest) {
-                    Text("Portrait").tag(false)
-                    Text("Landscape").tag(true)
-                }
-                .pickerStyle(.segmented)
-                .disabled(customRes)
-                .onChange(of: landscapeGuest) { v in
-                    UserDefaults.standard.set(v, forKey: "husk.landscapeGuest")
-                    HuskLog.log("ui", v ? "guest panel will be landscape"
-                                        : "guest panel will be portrait")
-                }
-            } header: {
-                Text("Screen")
-            } footer: {
-                Text(customRes
-                     ? "A custom resolution sets the shape itself, so this does nothing "
-                     + "while it is on. Type a wide size for landscape."
-                     : "The fallback Android runtime keeps a fixed panel until its next cold boot. "
-                     + "The default preserves compatibility with the installed startup snapshot. "
-                     + "Use custom resolution for this iPhone or iPad's display proportions.")
-            }
-
-            Section {
-                Toggle("Custom resolution", isOn: $customRes)
-                    .onChange(of: customRes) { v in
-                        UserDefaults.standard.set(v, forKey: "husk.customRes")
-                        store()
-                        HuskLog.log("ui", v ? "custom resolution on: "
-                                            + "\(widthText)x\(heightText)"
-                                            : "custom resolution off")
+        GeometryReader { geometry in
+            Form {
+                Section {
+                    Picker("Pixel Budget", selection: $preset) {
+                        ForEach(RuntimeDisplayConfiguration.Preset.allCases) { Text($0.title).tag($0) }
                     }
-
-                if customRes {
-                    Picker("Preset", selection: Binding(
-                        get: { presetIndex },
-                        set: { i in
-                            guard i >= 0, i < presets.count else { return }
-                            widthText = String(presets[i].w)
-                            heightText = String(presets[i].h)
-                            store()
-                        })) {
-                        ForEach(0..<presets.count, id: \.self) { i in
-                            Text(presets[i].name).tag(i)
+                    .onChange(of: preset) { _ in storeSelection() }
+                    if preset != .custom {
+                        Picker("Orientation", selection: $orientation) {
+                            ForEach(RuntimeDisplayConfiguration.Orientation.allCases) { Text($0.title).tag($0) }
                         }
-                        Text("Custom").tag(-1)
-                    }
-
-                    HStack {
-                        Text("Width")
-                        Spacer()
-                        TextField("720", text: $widthText)
-                            .keyboardType(.numberPad)
-                            .multilineTextAlignment(.trailing)
-                            .font(.technical())
-                            .frame(width: 90)
-                            .onChange(of: widthText) { _ in store() }
-                    }
-                    HStack {
-                        Text("Height")
-                        Spacer()
-                        TextField("1280", text: $heightText)
-                            .keyboardType(.numberPad)
-                            .multilineTextAlignment(.trailing)
-                            .font(.technical())
-                            .frame(width: 90)
-                            .onChange(of: heightText) { _ in store() }
-                    }
-
-                    if let size = effective {
-                        DetailRow(label: "Android will get",
-                                  value: "\(size.w) × \(size.h)")
+                        .onChange(of: orientation) { _ in storeSelection() }
                     } else {
-                        Text("Both sides must be between 240 and 2560.")
-                            .font(.caption).foregroundStyle(.orange)
+                        HStack {
+                            Text("Width")
+                            Spacer()
+                            TextField("720", text: $widthText)
+                                .keyboardType(.numberPad).multilineTextAlignment(.trailing)
+                                .font(.technical()).frame(width: 90)
+                                .onChange(of: widthText) { _ in storeCustom() }
+                        }
+                        HStack {
+                            Text("Height")
+                            Spacer()
+                            TextField("1280", text: $heightText)
+                                .keyboardType(.numberPad).multilineTextAlignment(.trailing)
+                                .font(.technical()).frame(width: 90)
+                                .onChange(of: heightText) { _ in storeCustom() }
+                        }
+                        if custom == nil {
+                            Text("Both sides must be between 240 and 2560 pixels. The last valid size is kept while editing.")
+                                .font(.caption).foregroundStyle(.orange)
+                        }
                     }
+                    Button("Fit Current Window") {
+                        viewport = Self.viewports().window
+                        preset = .balanced
+                        orientation = .device
+                        storeSelection()
+                    }
+                    if preset != .custom || custom != nil {
+                        DetailRow(label: "Next boot", value: preview.summary)
+                    }
+                    DetailRow(label: "Running now", value: QemuRunner.runtimeDisplaySummary)
+                } header: {
+                    Text("Android Runtime Display")
+                } footer: {
+                    Text("Balanced matches this window's proportions with a 1280-pixel longest edge. "
+                       + "Lower budgets reduce rendering work; actual speed depends on the app. "
+                       + "Android's interface density scales with the panel so controls stay readable. "
+                       + "Custom sizes keep the shape you enter; sizes are rounded to a multiple of eight.")
                 }
-
-                DetailRow(label: "Running now", value: running)
-            } header: {
-                Text("Resolution")
-            } footer: {
-                Text("The panel is built when the machine starts, so a change costs "
-                   + "one cold boot, and the next save replaces the machine saved at "
-                   + "the old size — changing back costs another. Sizes are rounded "
-                   + "to a multiple of eight. Device maximum uses this screen's native aspect ratio, capped at 2560 pixels per edge for the fallback runtime. "
-                   + "More pixels increase rendering and memory costs. Android's density does not change with the panel. "
-                   + "Native apps use their own Display & Resolution settings.")
+                Section {
+                    Text("Changes apply at the next runtime boot. Close APK Container completely and reopen it. "
+                       + "The running panel keeps its shape when the iPad or iPhone rotates; the picture fits without stretching.")
+                    Text("Older Device Maximum and Device 50% presets now follow the current window orientation. "
+                       + "Other saved custom dimensions are preserved.")
+                } header: {
+                    Text("Applying Changes")
+                }
+                Section {
+                    Text("Touch follows the displayed image. Use the keyboard and rotate controls at the bottom of the app screen.")
+                } header: {
+                    Text("Controls")
+                }
             }
-
-            Section {
-                Text("Touch is always on. The keyboard and the rotate control are "
-                   + "in the pill at the bottom of the guest's screen; a gamepad "
-                   + "and a pointer are not wired through yet.")
-                    .font(.footnote).foregroundStyle(.secondary)
-            } header: {
-                Text("Controls")
-            }
+            .huskForm()
+            .onChange(of: geometry.size) { _ in viewport = Self.viewports().window }
+            .onAppear { viewport = Self.viewports().window }
         }
-        .huskForm()
         .navigationTitle("Runtime Display & Input")
     }
 
-    /// The panel the guest actually has, which only means anything while there
-    /// is a guest: the stored value is last launch's until one starts.
-    private var running: String {
-        guard QemuRunner.shared.isRunning else { return "not started" }
-        return "\(QemuRunner.lastGuestRes.w) × \(QemuRunner.lastGuestRes.h)"
+    private func storeSelection() {
+        UserDefaults.standard.set(preset.rawValue, forKey: RuntimeDisplayConfiguration.Preferences.presetKey)
+        UserDefaults.standard.set(orientation.rawValue, forKey: RuntimeDisplayConfiguration.Preferences.orientationKey)
+        if preset == .custom { storeCustom() }
     }
 
-    /// Which preset the typed numbers are, if any.
-    private var presetIndex: Int {
-        guard let size = effective else { return -1 }
-        return presets.firstIndex { $0.w == size.w && $0.h == size.h } ?? -1
-    }
-
-    private func store() {
-        // Keep the last valid resolution while either text field is being edited.
-        guard let size = effective else { return }
+    private func storeCustom() {
+        guard let size = custom else { return }
         UserDefaults.standard.set(size.w, forKey: "husk.resWidth")
         UserDefaults.standard.set(size.h, forKey: "husk.resHeight")
     }

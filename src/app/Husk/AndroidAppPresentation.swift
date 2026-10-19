@@ -95,11 +95,12 @@ enum AndroidAppPresentation {
         case timedOut(Observation)
     }
 
-    // `visible` includes framework dialogs; `visible-apps` would exclude windows without ActivityRecord.
-    // The display report supplies focus, the visible-window report supplies the actual owning package.
     // Neither subcommand includes the cached LAST ANR section of the unrestricted window dump.
-    static let foregroundCommand = "(dumpsys window displays; dumpsys window visible) | grep -E "
-        + "\"^WINDOW MANAGER (DISPLAY CONTENTS|WINDOWS)|Display: mDisplayId=|^[[:space:]]*mCurrentFocus=|^[[:space:]]*mFocusedApp=|^[[:space:]]*Window #[0-9]+|^[[:space:]]*mDisplayId=|^[[:space:]]*mOwnerUid=|NO DISPLAY|Can't find service|Permission Denial|Exception|Error\""
+    // The first reports current display focus; the second verifies the owning package, including SystemUI.
+    static let focusCommand = "dumpsys window displays | grep -E "
+        + "\"^WINDOW MANAGER DISPLAY CONTENTS|Display: mDisplayId=|^[[:space:]]*mCurrentFocus=|^[[:space:]]*mFocusedApp=|NO DISPLAY|Can't find service|Permission Denial|Exception|Error\""
+    static let ownershipCommand = "dumpsys window visible | grep -E "
+        + "\"^WINDOW MANAGER WINDOWS|^[[:space:]]*Window #[0-9]+|^[[:space:]]*mDisplayId=|^[[:space:]]*mOwnerUid=|Can't find service|Permission Denial|Exception|Error\""
 
     private static func capture(_ pattern: String, in text: String, group: Int = 1) -> String? {
         guard let regex = try? NSRegularExpression(pattern: pattern),
@@ -175,12 +176,62 @@ enum AndroidAppPresentation {
         return result(.window(package: package, component: component), focus + " | " + owner.evidence)
     }
 
-    static func observe(run: RunCommand) throws -> Observation {
-        let result = try execute(foregroundCommand, timeout: 15, run: run)
-        guard result.status == 0 else {
-            return Observation(state: .readFailure, diagnostic: String(diagnostic(result).prefix(700)))
+    /// Owned by one presentation task. A stable WindowState identity has a stable owner, so
+    /// only a changed focus needs the second dump. Null focus or any failed read clears the cache.
+    final class Probe {
+        private var windowID: String?
+        private var ownershipReport: String?
+
+        private func clear() { windowID = nil; ownershipReport = nil }
+
+        func observe(run: RunCommand) throws -> Observation {
+            do {
+                let focus = try execute(focusCommand, timeout: 15, run: run)
+                guard focus.status == 0 else {
+                    clear()
+                    return Observation(state: .readFailure, diagnostic: String(diagnostic(focus).prefix(700)))
+                }
+                guard let id = focusedWindowID(focus.out) else {
+                    clear()
+                    return observation(focus.out)
+                }
+                if id == windowID, let ownershipReport {
+                    return observation(focus.out + "\n" + ownershipReport)
+                }
+                clear()
+                let owner = try execute(ownershipCommand, timeout: 15, run: run)
+                guard owner.status == 0 else {
+                    return Observation(state: .readFailure, diagnostic: String(diagnostic(owner).prefix(700)))
+                }
+                let result = observation(focus.out + "\n" + owner.out)
+                if result.package != nil {
+                    windowID = id
+                    ownershipReport = owner.out
+                }
+                return result
+            } catch {
+                clear()
+                throw error
+            }
         }
-        return observation(result.out)
+    }
+
+    private static func focusedWindowID(_ text: String) -> String? {
+        var display: Int?
+        var focuses: [String] = []
+        var live = false
+        for raw in text.split(separator: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.hasPrefix("WINDOW MANAGER DISPLAY CONTENTS") { live = true; display = nil }
+            else if live, let id = capture(#"^Display: mDisplayId=(\d+)"#, in: line) { display = Int(id) }
+            else if live, display == 0, line.hasPrefix("mCurrentFocus=") { focuses.append(line) }
+        }
+        guard focuses.count == 1 else { return nil }
+        return capture(#"^mCurrentFocus=Window\{([0-9a-fA-F]+) "#, in: focuses[0])
+    }
+
+    static func observe(run: RunCommand) throws -> Observation {
+        try Probe().observe(run: run)
     }
 
     /// Production presentation state machine. Unknown observations cover the surface and recover;
@@ -192,6 +243,8 @@ enum AndroidAppPresentation {
         // A visible unlock/system prompt is not proof that the requested app has appeared.
         var targetHasPresented = false
         var unknownSince: TimeInterval? = now()
+        var homeSince: TimeInterval?
+        var homeSamples = 0
         while true {
             if cancelled() { throw CancellationError() }
             let observation: Observation
@@ -214,13 +267,24 @@ enum AndroidAppPresentation {
                     targetHasPresented = true
                 }
                 unknownSince = nil
+                homeSince = nil
+                homeSamples = 0
                 await event(.visible(observation))
-            } else if home && targetHasPresented {
-                await event(.returnedHome(observation))
-                return
             } else {
-                // HOME can still be the previous window just after am start returns. Never expose it.
+                // Cover immediately, but keep the same app session across transient HOME/null
+                // windows during activity changes. Ending a session needs sustained HOME evidence.
                 await event(.covered(observation))
+                if home && targetHasPresented {
+                    if homeSince == nil { homeSince = now() }
+                    homeSamples += 1
+                    if homeSamples >= 2, now() - (homeSince ?? now()) >= 3 {
+                        await event(.returnedHome(observation))
+                        return
+                    }
+                } else {
+                    homeSince = nil
+                    homeSamples = 0
+                }
                 if unknownSince == nil { unknownSince = now() }
                 if now() - (unknownSince ?? now()) >= 30 {
                     await event(.timedOut(observation))
@@ -228,7 +292,8 @@ enum AndroidAppPresentation {
                 }
             }
             if cancelled() { throw CancellationError() }
-            try await pause(allowed ? 1 : 0.4)
+            // Recovery must not hammer two full window dumps at 2.5 Hz on an emulated CPU.
+            try await pause(1)
         }
     }
 
@@ -418,7 +483,9 @@ enum AndroidAppPresentation {
         if foreground == "com.android.settings" || foreground == "android"
             || foreground == "com.android.systemui" { return true }
         if foreground == requested || systemDialogs.contains(foreground) { return true }
-        // Without a verified HOME denylist, unrelated apps could be a custom desktop.
-        return !launching && homesVerified && installedPackages.contains(foreground)
+        // Once the requested app appears, it can hand off to any verified non-HOME window,
+        // including system activities absent from the installed-APK catalog. Without a verified
+        // HOME denylist, unrelated owners remain covered because they could be a custom desktop.
+        return !launching && homesVerified
     }
 }
