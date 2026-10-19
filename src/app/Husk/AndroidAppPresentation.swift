@@ -59,16 +59,170 @@ enum AndroidAppPresentation {
         return component
     }
 
-    static func foregroundPackage(_ text: String) -> String? {
-        let lines = text.split(separator: "\n").map(String.init)
-        // Window focus includes permission dialogs. Explicit null focus stays unknown.
-        for marker in ["mCurrentFocus=", "topResumedActivity=", "mResumedActivity:"] {
-            let matching = lines.filter { $0.contains(marker) }
-            guard !matching.isEmpty else { continue }
-            let packages = matching.reduce(into: Set<String>()) { $0.formUnion(componentPackages($1)) }
-            return packages.count == 1 ? packages.first : nil
+    enum FocusState: Equatable {
+        case window(package: String, component: String?)
+        case noFocus
+        case unrecognized
+        case readFailure
+    }
+
+    struct Observation: Equatable {
+        let state: FocusState
+        /// Bounded raw evidence for the diagnostic log, never a user-facing error message.
+        let diagnostic: String
+        var package: String? {
+            if case .window(let package, _) = state { return package }
+            return nil
         }
-        return nil
+        var reason: String {
+            switch state {
+            case .window(let package, _): return "Android is showing \(package)."
+            case .noFocus: return "Android has not focused an app window yet."
+            case .unrecognized: return "Android's focused window could not be identified."
+            case .readFailure: return "Android's window service did not answer."
+            }
+        }
+    }
+
+    enum MonitorEvent {
+        case visible(Observation)
+        case covered(Observation)
+        case returnedHome(Observation)
+        case timedOut(Observation)
+    }
+
+    // `visible` includes framework dialogs; `visible-apps` would exclude windows without ActivityRecord.
+    // The display report supplies focus, the visible-window report supplies the actual owning package.
+    // Neither subcommand includes the cached LAST ANR section of the unrestricted window dump.
+    static let foregroundCommand = "(dumpsys window displays; dumpsys window visible) | grep -E "
+        + "\"^WINDOW MANAGER (DISPLAY CONTENTS|WINDOWS)|Display: mDisplayId=|^[[:space:]]*mCurrentFocus=|^[[:space:]]*mFocusedApp=|^[[:space:]]*Window #[0-9]+|^[[:space:]]*mDisplayId=|^[[:space:]]*mOwnerUid=|NO DISPLAY|Can't find service|Permission Denial|Exception|Error\""
+
+    private static func capture(_ pattern: String, in text: String, group: Int = 1) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              let range = Range(match.range(at: group), in: text) else { return nil }
+        return String(text[range])
+    }
+
+    /// Identify the owner of the focused window on the physical guest display. A window title is
+    /// arbitrary text, not a package identity; mFocusedApp can sit behind keyguard or another window.
+    static func observation(_ text: String) -> Observation {
+        struct WindowOwner {
+            let id: String
+            var display: Int?
+            var package: String?
+            var evidence = ""
+        }
+        var currentDisplay: Int?
+        var defaultFocus: [String] = []
+        var focusedApps: [String] = []
+        var inWindows = false
+        var sawDisplays = false
+        var sawWindows = false
+        var owners: [WindowOwner] = []
+        var currentOwner: WindowOwner?
+        for raw in text.split(separator: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.hasPrefix("WINDOW MANAGER DISPLAY CONTENTS") {
+                sawDisplays = true; inWindows = false; currentDisplay = nil
+            } else if line.hasPrefix("WINDOW MANAGER WINDOWS") {
+                sawWindows = true; inWindows = true
+            } else if !inWindows, let display = capture(#"^Display: mDisplayId=(\d+)"#, in: line) {
+                currentDisplay = Int(display)
+            } else if !inWindows, currentDisplay == 0, line.hasPrefix("mCurrentFocus=") {
+                defaultFocus.append(line)
+            } else if !inWindows, currentDisplay == 0, line.hasPrefix("mFocusedApp=") {
+                focusedApps.append(line)
+            } else if inWindows, let id = capture(#"^Window #[0-9]+ Window\{([0-9a-fA-F]+) "#, in: line) {
+                if let currentOwner { owners.append(currentOwner) }
+                currentOwner = WindowOwner(id: id)
+            } else if inWindows, let display = capture(#"^mDisplayId=(\d+)"#, in: line) {
+                currentOwner?.display = Int(display)
+            } else if inWindows, line.hasPrefix("mOwnerUid="),
+                      let package = capture(#"(?:^|\s)package=([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)(?:\s|$)"#, in: line) {
+                currentOwner?.package = package
+                currentOwner?.evidence = line
+            }
+        }
+        if let currentOwner { owners.append(currentOwner) }
+        let focusEvidence = defaultFocus.joined(separator: " | ")
+        func result(_ state: FocusState, _ detail: String) -> Observation {
+            Observation(state: state, diagnostic: String(detail.prefix(700)))
+        }
+        guard sawDisplays else {
+            return result(.readFailure, "No live display report: " + text.replacingOccurrences(of: "\n", with: " | "))
+        }
+        guard defaultFocus.count == 1, let focus = defaultFocus.first else {
+            return result(.unrecognized, "Expected one display-0 focus; got \(defaultFocus.count). " + focusEvidence)
+        }
+        if focus == "mCurrentFocus=null" { return result(.noFocus, focus) }
+        guard let id = capture(#"^mCurrentFocus=Window\{([0-9a-fA-F]+) "#, in: focus), sawWindows else {
+            return result(.unrecognized, "Missing focus identity or visible-window report. " + focus)
+        }
+        let matching = owners.filter { $0.id == id && $0.display == 0 }
+        guard matching.count == 1, let owner = matching.first, let package = owner.package else {
+            return result(.unrecognized, "No unique visible owner for display-0 focus. " + focus)
+        }
+        // Component names are useful diagnostics, but only after the window's actual owner is known.
+        let componentPattern = #"([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*/[A-Za-z0-9_.$]+)"#
+        let candidate = capture(componentPattern, in: focus)
+            ?? focusedApps.compactMap { capture(componentPattern, in: $0) }.first
+        let component = candidate?.hasPrefix(package + "/") == true ? candidate : nil
+        return result(.window(package: package, component: component), focus + " | " + owner.evidence)
+    }
+
+    static func observe(run: RunCommand) throws -> Observation {
+        let result = try execute(foregroundCommand, timeout: 15, run: run)
+        guard result.status == 0 else {
+            return Observation(state: .readFailure, diagnostic: String(diagnostic(result).prefix(700)))
+        }
+        return observation(result.out)
+    }
+
+    /// Production presentation state machine. Unknown observations cover the surface and recover;
+    /// they do not discard a running app after one transient focus change or failed bridge read.
+    static func monitor(requested: String, session: Session, installedPackages: Set<String>,
+                        allowSettings: Bool, read: () throws -> Observation,
+                        now: () -> TimeInterval, pause: (TimeInterval) async throws -> Void,
+                        cancelled: () -> Bool, event: (MonitorEvent) async -> Void) async throws {
+        var presented = false
+        var unknownSince: TimeInterval? = now()
+        while true {
+            if cancelled() { throw CancellationError() }
+            let observation: Observation
+            do { observation = try read() }
+            catch is CancellationError { throw CancellationError() }
+            catch {
+                observation = Observation(state: .readFailure,
+                    diagnostic: String(error.localizedDescription.prefix(700)))
+            }
+            if cancelled() { throw CancellationError() }
+            let home = observation.package.map {
+                knownLaunchers.contains($0) || session.homePackages.contains($0)
+            } ?? false
+            let allowed = allows(observation.package, requested: requested,
+                                 homePackages: session.homePackages, installedPackages: installedPackages,
+                                 allowSettings: allowSettings, launching: !presented,
+                                 homesVerified: session.homesVerified)
+            if allowed {
+                presented = true
+                unknownSince = nil
+                await event(.visible(observation))
+            } else if home && presented {
+                await event(.returnedHome(observation))
+                return
+            } else {
+                // HOME can still be the previous window just after am start returns. Never expose it.
+                await event(.covered(observation))
+                if unknownSince == nil { unknownSince = now() }
+                if now() - (unknownSince ?? now()) >= 30 {
+                    await event(.timedOut(observation))
+                    return
+                }
+            }
+            if cancelled() { throw CancellationError() }
+            try await pause(allowed ? 1 : 0.4)
+        }
     }
 
     static func hasErrorLine(_ output: String) -> Bool {
@@ -195,6 +349,11 @@ enum AndroidAppPresentation {
                     command = "am start -W --user 0 -a android.intent.action.MAIN -c android.intent.category.\(entryCategory) -n '\(component)'"
                 }
                 try checkCancellation()
+                // Explicit launch intent wakes a sleeping display without dismissing a secure keyguard
+                // or changing the user's permanent screen-timeout settings.
+                let wake = try execute("input keyevent KEYCODE_WAKEUP", timeout: 15, run: run)
+                try checkCancellation()
+                if wake.status != 0 { log("Android wake request: \(diagnostic(wake))") }
                 let launched = try execute(command, timeout: 60, run: run)
                 try checkCancellation()
                 guard launchSucceeded(status: launched.status, output: launched.out) else {
@@ -224,7 +383,9 @@ enum AndroidAppPresentation {
                        homesVerified: Bool = true) -> Bool {
         guard let foreground, !homePackages.contains(foreground),
               !knownLaunchers.contains(foreground) else { return false }
-        if foreground == "com.android.settings" { return allowSettings }
+        // APK permission flows open Settings, and framework-owned dialogs can have arbitrary titles.
+        // These identities come from the matched window owner, never from an underlying activity.
+        if foreground == "com.android.settings" || foreground == "android" { return true }
         if foreground == requested || systemDialogs.contains(foreground) { return true }
         // Without a verified HOME denylist, unrelated apps could be a custom desktop.
         return !launching && homesVerified && installedPackages.contains(foreground)

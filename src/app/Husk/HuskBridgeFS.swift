@@ -888,10 +888,13 @@ final class AndroidHost: ObservableObject {
     @Published private(set) var busy: String?
     /// The guest surface may be shown only after Android confirms an app or its system dialog has focus.
     @Published private(set) var appSurfaceAllowed = false
+    /// Survives a temporary focus gap while the guest surface is covered.
+    @Published private(set) var presentationActive = false
     @Published private(set) var foregroundPackage: String?
     private var presentationTask: Task<Void, Never>?
     private var presentationID = UUID()
     private var presentationOpening = false
+    private var lastPresentationDiagnostic: String?
     /// What just finished. Progress lives in `busy`; this is the sentence after.
     @Published var toast: Toast?
 
@@ -1736,9 +1739,11 @@ final class AndroidHost: ObservableObject {
         presentationTask?.cancel()
         presentationTask = nil
         appSurfaceAllowed = false
+        presentationActive = false
         foregroundPackage = nil
         if presentationOpening { busy = nil }
         presentationOpening = false
+        lastPresentationDiagnostic = nil
     }
 
     func launch(_ pkg: String, then: @escaping () -> Void) {
@@ -1756,6 +1761,7 @@ final class AndroidHost: ObservableObject {
         }
         endAppPresentation()
         let request = presentationID
+        presentationActive = true
         presentationOpening = true
         busy = "Opening…"
         let installed = Set(packages.map(\.name))
@@ -1767,47 +1773,54 @@ final class AndroidHost: ObservableObject {
                     cancelled: { Task.isCancelled },
                     pause: { try await Task.sleep(nanoseconds: 2_000_000_000) },
                     log: { HuskLog.log("bridge", $0) })
-                var firstForeground: String?
-                // A successful launch command can return before the first activity is resumed. Keep the guest covered.
-                let deadline = Date().addingTimeInterval(30)
-                while !Task.isCancelled, Date() < deadline {
-                    let foreground = try? Self.readForegroundPackage()
-                    if AndroidAppPresentation.allows(foreground, requested: pkg, homePackages: session.homePackages,
-                                                     installedPackages: installed, allowSettings: settings, launching: true, homesVerified: session.homesVerified) {
-                        firstForeground = foreground
-                        break
-                    }
-                    try await Task.sleep(nanoseconds: 400_000_000)
-                }
-                guard !Task.isCancelled else { return }
-                guard let firstForeground else {
-                    throw AndroidAppPresentation.LaunchError.message("The app did not reach the foreground. Android may still be restarting, or the app may have closed. The runtime display remains hidden.")
-                }
-                await MainActor.run {
-                    guard let self, self.presentationID == request else { return }
-                    self.presentationOpening = false
-                    self.busy = nil
-                    self.foregroundPackage = firstForeground
-                    self.appSurfaceAllowed = true
-                    if !settings { self.markLaunched(pkg) }
-                    then()
-                }
-                // One serial probe at a time; cancel on returning to Apps or backgrounding the host.
-                while !Task.isCancelled {
-                    try await Task.sleep(nanoseconds: 1_000_000_000)
-                    let foreground = try Self.readForegroundPackage()
-                    let allowed = AndroidAppPresentation.allows(foreground, requested: pkg, homePackages: session.homePackages,
-                                                                installedPackages: installed, allowSettings: settings, launching: false, homesVerified: session.homesVerified)
-                    await MainActor.run {
-                        guard let self, self.presentationID == request else { return }
-                        self.foregroundPackage = foreground
-                        if !allowed {
-                            self.endAppPresentation()
-                            HuskLog.log("bridge", "returned to Apps: foreground is \(foreground ?? "unavailable")")
+                try await AndroidAppPresentation.monitor(
+                    requested: pkg, session: session, installedPackages: installed,
+                    allowSettings: settings,
+                    read: { try AndroidAppPresentation.observe(run: { try GuestBridge.shared.run($0, timeout: $1) }) },
+                    now: { ProcessInfo.processInfo.systemUptime },
+                    pause: { interval in try await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000)) },
+                    cancelled: { Task.isCancelled },
+                    event: { event in
+                        await MainActor.run {
+                            guard let self, self.presentationID == request else { return }
+                            switch event {
+                            case .visible(let observation):
+                                let firstPresentation = self.presentationOpening
+                                self.presentationOpening = false
+                                self.foregroundPackage = observation.package
+                                self.appSurfaceAllowed = true
+                                let evidence = "showing: " + observation.diagnostic
+                                if self.lastPresentationDiagnostic != evidence {
+                                    self.lastPresentationDiagnostic = evidence
+                                    HuskLog.log("focus", evidence)
+                                }
+                                if firstPresentation {
+                                    self.busy = nil
+                                    if !settings { self.markLaunched(pkg) }
+                                    then()
+                                }
+                            case .covered(let observation):
+                                // Keep the request and route alive during rotation, dialogs,
+                                // or a missed probe; the UI covers the surface immediately.
+                                self.foregroundPackage = observation.package
+                                self.appSurfaceAllowed = false
+                                let evidence = "covered: " + observation.diagnostic
+                                if self.lastPresentationDiagnostic != evidence {
+                                    self.lastPresentationDiagnostic = evidence
+                                    HuskLog.log("focus", evidence)
+                                }
+                            case .returnedHome(let observation):
+                                HuskLog.log("focus", "returned to Apps: \(observation.diagnostic)")
+                                self.endAppPresentation()
+                            case .timedOut(let observation):
+                                HuskLog.log("focus", "foreground recovery timed out: \(observation.diagnostic)")
+                                self.endAppPresentation()
+                                self.say("Android app unavailable",
+                                         "Android accepted the launch but did not present an app window. "
+                                         + observation.reason, good: false)
+                            }
                         }
-                    }
-                    if !allowed { return }
-                }
+                    })
             } catch {
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
@@ -1820,12 +1833,4 @@ final class AndroidHost: ObservableObject {
         }
     }
 
-    nonisolated private static func readForegroundPackage() throws -> String? {
-        // A unique prefix excludes stale output if an earlier bridge command timed out.
-        let marker = "APK_FOCUS_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
-        let result = try GuestBridge.shared.run(
-            "echo \(marker); dumpsys window displays | grep 'mCurrentFocus='", timeout: 10)
-        guard result.status == 0, let range = result.out.range(of: marker, options: .backwards) else { return nil }
-        return AndroidAppPresentation.foregroundPackage(String(result.out[range.upperBound...]))
-    }
 }

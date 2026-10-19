@@ -47,7 +47,7 @@ Verify on an actual iPhone/iPad:
 - Installation and launch, JIT activation, and available memory behavior.
 - APK import and launch, portrait/landscape layouts, native resolution, lower presets, and custom limits.
 - Touch and keyboard alignment, window resizing, and returning to fullscreen.
-- Runtime setup, app launch/exit, and the foreground guard's transition back to the native library. Polling can briefly expose the Android launcher after an app exits.
+- Runtime setup, app launch/exit, app permission screens, rotation and transient focus recovery, and the foreground guard's transition back to the native library. Polling can briefly expose the Android launcher after an app exits.
 
 No device performance improvement or universal APK compatibility is established by the build alone.
 

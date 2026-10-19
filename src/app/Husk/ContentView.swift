@@ -39,7 +39,8 @@ struct ContentView: View {
     /// Guest pixels are exposed only after the host validates an app foreground.
     /// Keep its Metal surface mounted while hidden so the renderer remains live.
     private var appSurfaceVisible: Bool {
-        showGuestScreen && started && runner.isRunning && host.appSurfaceAllowed
+        scenePhase == .active && showGuestScreen && started && runner.isRunning
+            && host.presentationActive && host.appSurfaceAllowed
     }
 
     var body: some View {
@@ -148,9 +149,11 @@ struct ContentView: View {
         }
         .onChange(of: host.isReady) { _ in resumeRuntimeRequests() }
         .onChange(of: host.busy) { _ in resumeRuntimeRequests() }
-        .onChange(of: host.appSurfaceAllowed) { allowed in
-            // No cross-fade: a rejected foreground must disappear immediately.
-            if !allowed { showGuestScreen = false }
+        .onChange(of: host.presentationActive) { active in
+            // Focus can disappear temporarily during an activity transition.
+            // Cover the guest through appSurfaceVisible without losing its route;
+            // only ending the presentation returns permanently to Apps.
+            if !active { showGuestScreen = false }
         }
         .onChange(of: guest.state) { state in
             if state == .ready, runtimeRequested || !incoming.forAndroid.isEmpty {
@@ -193,7 +196,9 @@ struct ContentView: View {
     }
 
     private func showAppPresentation() {
-        guard scenePhase == .active, host.appSurfaceAllowed else { return }
+        guard host.presentationActive, host.appSurfaceAllowed else { return }
+        // Preserve the validated route through temporary iOS interruptions.
+        // appSurfaceVisible keeps it covered until this scene is active again.
         showGuestScreen = true
     }
 
