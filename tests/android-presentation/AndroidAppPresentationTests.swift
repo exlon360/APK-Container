@@ -38,7 +38,9 @@ struct AndroidAppPresentationTests {
         var logs: [String] = []
         init(_ steps: [Step]) {
             self.steps = steps.flatMap { step in
-                step.command.hasPrefix("am start ") ? [Step("input keyevent KEYCODE_WAKEUP", ""), step] : [step]
+                step.command.hasPrefix("am start ")
+                    ? [Step("input keyevent KEYCODE_WAKEUP", ""), Step("cmd statusbar collapse", ""),
+                       Step("wm dismiss-keyguard", ""), step] : [step]
             }
         }
         func run(_ text: String, timeout: TimeInterval) throws -> AP.CommandResult {
@@ -155,8 +157,8 @@ struct AndroidAppPresentationTests {
         precondition(serviceRecovery.events == ["covered", "visible", "home"])
         let lockedRecovery = Timeline([app, locked, unknown, app, home])
         try await lockedRecovery.run()
-        precondition(lockedRecovery.events == ["visible", "covered", "covered", "visible", "home"])
-        for observation in [unknown, locked, AP.observation("unknown report")] {
+        precondition(lockedRecovery.events == ["visible", "visible", "covered", "visible", "home"])
+        for observation in [unknown, AP.observation("unknown report")] {
             let timeout = Timeline([observation])
             try await timeout.run()
             precondition(timeout.events.last == "timeout" && !timeout.events.contains("visible"))
@@ -171,11 +173,34 @@ struct AndroidAppPresentationTests {
         do { try await cancelled.run(); preconditionFailure("Expected monitor cancellation") }
         catch is CancellationError {} catch { preconditionFailure("Wrong monitor cancellation") }
         precondition(cancelled.events == ["covered"] && cancelled.readCount == 1)
-        for owner in ["com.android.settings", "android", "com.android.permissioncontroller"] {
+        for owner in ["com.android.settings", "android", "com.android.permissioncontroller", "com.android.systemui"] {
             let dialog = AP.observation(windowReport(owner: owner, title: "Permission or error dialog"))
             let handoff = Timeline([app, dialog, app, home])
             try await handoff.run()
             precondition(handoff.events == ["visible", "visible", "visible", "home"])
+        }
+        // This is the device's actual blocked window: a SystemUI-owned NotificationShade.
+        let notificationShade = AP.observation(windowReport(owner: "com.android.systemui", title: "NotificationShade"))
+        let initialUnlock = Timeline([notificationShade, home, app, home])
+        try await initialUnlock.run()
+        precondition(initialUnlock.events == ["visible", "covered", "visible", "home"])
+        let settingsPermission = AP.observation(windowReport(owner: "com.android.settings", title: "Permission dialog",
+            focusedApp: "com.android.settings/.Settings$AppManageExternalStorageActivity"))
+        precondition(!AP.isHome(settingsPermission.package, component: settingsPermission.component,
+                               homePackages: ["com.android.settings"]))
+        precondition(AP.allows(settingsPermission.package, requested: pkg, homePackages: ["com.android.settings"],
+                               installedPackages: [], allowSettings: false, launching: true,
+                               component: settingsPermission.component))
+        for activity in ["com.android.settings/.FallbackHome", "com.android.settings/com.android.settings.FallbackHome"] {
+            let fallback = AP.observation(windowReport(owner: "com.android.settings", title: "Empty fallback window",
+                                                       focusedApp: activity))
+            precondition(AP.isHome(fallback.package, component: fallback.component, homePackages: ["com.android.settings"]))
+            precondition(!AP.allows(fallback.package, requested: pkg, homePackages: ["com.android.settings"],
+                                    installedPackages: [], allowSettings: false, launching: false,
+                                    component: fallback.component))
+            let fallbackExit = Timeline([app, fallback])
+            try await fallbackExit.run()
+            precondition(fallbackExit.events == ["visible", "home"])
         }
         let customHome = Timeline([app, mislabeled])
         try await customHome.run()
@@ -201,7 +226,7 @@ struct AndroidAppPresentationTests {
         precondition(AP.observation(windowReport(owner: pkg, focus: "null")).state == .noFocus)
         precondition(AP.observation("window service unavailable").state == .readFailure)
         precondition(allowed(pkg, launching: true))
-        for denied in [nil, "org.lineageos.trebuchet", "com.example.launcher", "com.android.launcher3", "com.android.systemui", "com.unknown.app"] as [String?] {
+        for denied in [nil, "org.lineageos.trebuchet", "com.example.launcher", "com.android.launcher3", "com.unknown.app"] as [String?] {
             precondition(!allowed(denied))
         }
         precondition(allowed("com.android.permissioncontroller", launching: true))
@@ -210,6 +235,7 @@ struct AndroidAppPresentationTests {
         precondition(allowed("com.android.settings", settings: true, launching: true))
         precondition(allowed("com.android.settings", launching: true))
         precondition(allowed("android", launching: true))
+        precondition(allowed("com.android.systemui", launching: true))
         precondition(!allowed("com.example.browser", launching: true))
         precondition(allowed("com.example.browser"))
         precondition(allowed(pkg, launching: true, homePackages: []))
@@ -296,6 +322,25 @@ struct AndroidAppPresentationTests {
         catch is CancellationError {} catch { preconditionFailure("Wrong cancellation error") }
         cancelled.finished()
         precondition(!cancelled.commands.contains { $0.hasPrefix("am start") })
+
+        // A device may reject either optional panel request. It must still launch and allow user interaction.
+        for failedCommand in ["input keyevent KEYCODE_WAKEUP", "cmd statusbar collapse", "wm dismiss-keyguard"] {
+            for throwsError in [false, true] {
+                let optionalUI = MockBridge([Step(AP.readinessCommand, ready), Step(AP.homeCommand, noHome),
+                                             Step(resolve(), main), Step(launch(), "Status: ok")])
+                let index = optionalUI.steps.firstIndex { $0.command == failedCommand }!
+                optionalUI.steps[index] = Step(failedCommand, "SecurityException: request unavailable", status: 1, fail: throwsError)
+                _ = try await optionalUI.start(); optionalUI.finished()
+                precondition(!optionalUI.logs.isEmpty)
+            }
+        }
+        let cancelledUnlock = MockBridge([Step(AP.readinessCommand, ready), Step(AP.homeCommand, noHome),
+                                           Step(resolve(), main), Step("input keyevent KEYCODE_WAKEUP", ""),
+                                           Step("cmd statusbar collapse", ""), Step("wm dismiss-keyguard", "", cancelAfter: true)])
+        do { _ = try await cancelledUnlock.start(); preconditionFailure("Expected cancellation during unlock") }
+        catch is CancellationError {} catch { preconditionFailure("Wrong unlock cancellation error") }
+        cancelledUnlock.finished()
+        precondition(!cancelledUnlock.commands.contains { $0.hasPrefix("am start") })
 
         let settings = MockBridge([Step(AP.readinessCommand, ready), Step(AP.homeCommand, noHome),
                                    Step("am start -W --user 0 -a android.settings.APPLICATION_DETAILS_SETTINGS -d package:\(pkg)", "Status: ok")])

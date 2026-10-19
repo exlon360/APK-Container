@@ -74,6 +74,10 @@ enum AndroidAppPresentation {
             if case .window(let package, _) = state { return package }
             return nil
         }
+        var component: String? {
+            if case .window(_, let component) = state { return component }
+            return nil
+        }
         var reason: String {
             switch state {
             case .window(let package, _): return "Android is showing \(package)."
@@ -165,9 +169,9 @@ enum AndroidAppPresentation {
         }
         // Component names are useful diagnostics, but only after the window's actual owner is known.
         let componentPattern = #"([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*/[A-Za-z0-9_.$]+)"#
-        let candidate = capture(componentPattern, in: focus)
-            ?? focusedApps.compactMap { capture(componentPattern, in: $0) }.first
-        let component = candidate?.hasPrefix(package + "/") == true ? candidate : nil
+        let candidates = [capture(componentPattern, in: focus)].compactMap { $0 }
+            + focusedApps.compactMap { capture(componentPattern, in: $0) }
+        let component = candidates.first { $0.hasPrefix(package + "/") }
         return result(.window(package: package, component: component), focus + " | " + owner.evidence)
     }
 
@@ -185,7 +189,8 @@ enum AndroidAppPresentation {
                         allowSettings: Bool, read: () throws -> Observation,
                         now: () -> TimeInterval, pause: (TimeInterval) async throws -> Void,
                         cancelled: () -> Bool, event: (MonitorEvent) async -> Void) async throws {
-        var presented = false
+        // A visible unlock/system prompt is not proof that the requested app has appeared.
+        var targetHasPresented = false
         var unknownSince: TimeInterval? = now()
         while true {
             if cancelled() { throw CancellationError() }
@@ -197,18 +202,20 @@ enum AndroidAppPresentation {
                     diagnostic: String(error.localizedDescription.prefix(700)))
             }
             if cancelled() { throw CancellationError() }
-            let home = observation.package.map {
-                knownLaunchers.contains($0) || session.homePackages.contains($0)
-            } ?? false
+            let home = isHome(observation.package, component: observation.component,
+                              homePackages: session.homePackages)
             let allowed = allows(observation.package, requested: requested,
                                  homePackages: session.homePackages, installedPackages: installedPackages,
-                                 allowSettings: allowSettings, launching: !presented,
-                                 homesVerified: session.homesVerified)
+                                 allowSettings: allowSettings, launching: !targetHasPresented,
+                                 homesVerified: session.homesVerified, component: observation.component)
             if allowed {
-                presented = true
+                if observation.package == requested
+                    || (allowSettings && observation.package == "com.android.settings") {
+                    targetHasPresented = true
+                }
                 unknownSince = nil
                 await event(.visible(observation))
-            } else if home && presented {
+            } else if home && targetHasPresented {
                 await event(.returnedHome(observation))
                 return
             } else {
@@ -349,11 +356,22 @@ enum AndroidAppPresentation {
                     command = "am start -W --user 0 -a android.intent.action.MAIN -c android.intent.category.\(entryCategory) -n '\(component)'"
                 }
                 try checkCancellation()
-                // Explicit launch intent wakes a sleeping display without dismissing a secure keyguard
-                // or changing the user's permanent screen-timeout settings.
-                let wake = try execute("input keyevent KEYCODE_WAKEUP", timeout: 15, run: run)
+                // Close a stale shade and ask Android to dismiss its lock screen. A secure
+                // keyguard still presents its own authentication UI; no lock settings change.
+                for preparation in ["input keyevent KEYCODE_WAKEUP", "cmd statusbar collapse", "wm dismiss-keyguard"] {
+                    try checkCancellation()
+                    do {
+                        let result = try execute(preparation, timeout: 15, run: run)
+                        if result.status != 0 || hasErrorLine(result.out) {
+                            log("Android launch preparation \(preparation): \(diagnostic(result))")
+                        }
+                    } catch {
+                        // These UI requests are best effort. The verified SystemUI window remains
+                        // available for the user to complete unlocking or dismiss a prompt.
+                        log("Android launch preparation \(preparation): \(error.localizedDescription)")
+                    }
+                }
                 try checkCancellation()
-                if wake.status != 0 { log("Android wake request: \(diagnostic(wake))") }
                 let launched = try execute(command, timeout: 60, run: run)
                 try checkCancellation()
                 guard launchSucceeded(status: launched.status, output: launched.out) else {
@@ -378,14 +396,27 @@ enum AndroidAppPresentation {
         throw LaunchError.message("The Android runtime is still restarting or unavailable. Try again after it finishes starting. \(lastFailure)")
     }
 
+    static func isHome(_ package: String?, component: String?, homePackages: Set<String>) -> Bool {
+        guard let package else { return false }
+        if knownLaunchers.contains(package) { return true }
+        if package == "com.android.settings" {
+            // Settings also owns a boot fallback HOME activity. Its permission and app-info
+            // windows must not be rejected merely because that package handles HOME as well.
+            return component == "com.android.settings/.FallbackHome"
+                || component == "com.android.settings/com.android.settings.FallbackHome"
+        }
+        return homePackages.contains(package)
+    }
+
     static func allows(_ foreground: String?, requested: String, homePackages: Set<String>,
                        installedPackages: Set<String>, allowSettings: Bool, launching: Bool,
-                       homesVerified: Bool = true) -> Bool {
-        guard let foreground, !homePackages.contains(foreground),
-              !knownLaunchers.contains(foreground) else { return false }
-        // APK permission flows open Settings, and framework-owned dialogs can have arbitrary titles.
-        // These identities come from the matched window owner, never from an underlying activity.
-        if foreground == "com.android.settings" || foreground == "android" { return true }
+                       homesVerified: Bool = true, component: String? = nil) -> Bool {
+        guard let foreground, !isHome(foreground, component: component, homePackages: homePackages) else { return false }
+        // These packages own unlock screens, permission UI and framework dialogs. Let the user
+        // interact with their actual focused windows instead of covering them until a timeout.
+        // Ownership is verified by the probe; no underlying activity or arbitrary title grants access.
+        if foreground == "com.android.settings" || foreground == "android"
+            || foreground == "com.android.systemui" { return true }
         if foreground == requested || systemDialogs.contains(foreground) { return true }
         // Without a verified HOME denylist, unrelated apps could be a custom desktop.
         return !launching && homesVerified && installedPackages.contains(foreground)
