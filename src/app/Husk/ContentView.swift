@@ -487,7 +487,7 @@ struct GuestScreenView: View {
                                 Label(runner.isSavingState ? "Saving…" : "Save Runtime",
                                       systemImage: "externaldrive.badge.checkmark")
                             }
-                            .disabled(runner.isSavingState)
+                            .disabled(runner.isSavingState || !runner.snapshotSavingSupported)
                             Button { showLogs = true } label: {
                                 Label("Console", systemImage: "terminal")
                             }

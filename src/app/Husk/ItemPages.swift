@@ -499,9 +499,10 @@ struct AndroidRuntimeSettings: View {
                     Button { runner.saveState(reason: "asked from compatibility runtime settings") } label: {
                         Label(runner.isSavingState ? "Saving…" : "Save Runtime State", systemImage: "externaldrive.badge.checkmark")
                     }
-                    .disabled(runner.isSavingState)
+                    .disabled(runner.isSavingState || !runner.snapshotSavingSupported)
                 } footer: {
-                    Text("Saving keeps installed apps and their state ready for the next session.")
+                    Text("APKs and app data are stored on the Android disk. RAM snapshots "
+                       + "are available only in software mode; restoring one returns to its saved point.")
                 }
             }
 

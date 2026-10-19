@@ -149,15 +149,6 @@ final class QemuRunner: ObservableObject {
     /// bottom of the guest screen unreachable. One number, in one place, taken
     /// from what was actually asked for.
     nonisolated(unsafe) static var lastGuestRes = (w: 360, h: 800)
-    /// True once qemu_init() has returned and QEMU's locks exist.
-    /// Whether a save leaves Android's framework running.
-    ///
-    /// On: apps are closed and system_server stays up, so the network survives
-    /// the restore. Off: zygote is stopped too, which clears every last GPU
-    /// resource at the cost of a framework restart the network may not survive.
-    nonisolated static var keepNetworkAcrossSaves: Bool {
-        UserDefaults.standard.object(forKey: "husk.keepNetwork") as? Bool ?? true
-    }
     /// The resolution the machine was actually created with, so a resize that
     /// changes nothing can be skipped.
     nonisolated(unsafe) static var bootGuestRes = (w: 360, h: 800)
@@ -183,23 +174,24 @@ final class QemuRunner: ObservableObject {
         UserDefaults.standard.object(forKey: "husk.soundDevice") as? Bool ?? true
     }
 
-    /// What the saved machine's hardware looks like, for deciding whether a
-    /// restore is even possible. Was just the display; sound joins it because
-    /// it changes the same thing.
+    /// Captured from the argv used for this session. Changing preferences must
+    /// never relabel an already running machine or enable GPU snapshots.
+    nonisolated(unsafe) private static var runningSnapshotPolicy: RuntimeSnapshotPolicy?
+    nonisolated(unsafe) private static var runningMemoryStrategy = ""
     nonisolated static var machineStamp: String {
-        (glProven ? "gl" : "sw")
-            + (soundEnabled ? "+snd" : "")
-            + (landscapeGuest ? "+land" : "")
-            + (customResolution.map { "+\($0.w)x\($0.h)" } ?? "")
+        runningSnapshotPolicy?.stamp ?? "not-started"
     }
 
-    /// Whether Husk saves the machine on its own once Android settles.
-    ///
-    /// On by default, because a machine that is never saved cold-boots every
-    /// launch. Off is for when the save itself is the problem -- it fires while
-    /// you are using the guest, freezes the picture for fifteen seconds, and
-    /// until today could take the whole app down with it. The manual button in
-    /// the library is unaffected either way.
+    nonisolated var snapshotSavingSupported: Bool {
+        QemuRunner.qemuReady && QemuRunner.runningSnapshotPolicy?.savingSupported == true
+    }
+
+    nonisolated var automaticSnapshotSavingAllowed: Bool {
+        snapshotSavingSupported && QemuRunner.autoSaveEnabled
+    }
+
+    /// Software snapshots may be automatic. GPU saves are disabled regardless
+    /// of this preference because quiescing the compositor crashes system_server.
     nonisolated static var autoSaveEnabled: Bool {
         UserDefaults.standard.object(forKey: "husk.autoSave") as? Bool ?? true
     }
@@ -341,7 +333,7 @@ final class QemuRunner: ObservableObject {
     nonisolated func forgetSnapshot(mode: String) -> Bool {
         guard hasSnapshot else { return false }
         let have = snapshotDisplay ?? "sw"
-        guard have == mode else { return false }
+        guard RuntimeSnapshotPolicy.displayMode(of: have) == mode else { return false }
         for path in [snapshotSizePath, snapshotDisplayPath, memoryStrategyPath] {
             try? FileManager.default.removeItem(atPath: path)
         }
@@ -359,24 +351,22 @@ final class QemuRunner: ObservableObject {
     /// taken in the other display mode is not a snapshot this session can use.
     nonisolated var hasUsableSnapshot: Bool {
         guard hasSnapshot else { return false }
-        return (snapshotDisplay ?? "sw") == QemuRunner.machineStamp
+        return snapshotSavingSupported && snapshotDisplay == QemuRunner.machineStamp
     }
 
-    /// Write the running machine to disk so the next launch restores *this*.
-    ///
-    /// Not an optimisation -- it is what makes anything persist at all.
-    /// Restoring rewinds the userdata disk to the moment the snapshot was taken,
-    /// and it has to: the restored RAM describes that exact disk, down to the
-    /// page cache and the ext4 journal, and resuming a kernel against a
-    /// filesystem that moved on underneath it corrupts both. So everything done
-    /// since the snapshot -- an app installed, an account signed into, a setting
-    /// changed -- is discarded on the next launch unless the machine is saved
-    /// over the top.
-    ///
-    /// Saving writes the whole of guest RAM, so the picture freezes for as long
-    /// as that takes. Callers are expected to say so.
-    func saveState(reason: String, completion: ((Bool) -> Void)? = nil) {
-        guard isRunning else { completion?(false); return }
+    /// Save software-rendered RAM and device state. Guest disk writes persist
+    /// without this operation. Restoring a snapshot rewinds that disk to its
+    /// saved state, so later changes are discarded on restore.
+    /// GPU snapshots are unsupported: stopping their compositor can crash Android.
+    func saveState(reason: String, automatic: Bool = false, completion: ((Bool) -> Void)? = nil) {
+        guard isRunning, snapshotSavingSupported,
+              QemuRunner.runningSnapshotPolicy?.allowsSave(
+                automatic: automatic, automaticEnabled: QemuRunner.autoSaveEnabled) == true else {
+            HuskLog.log("snap", "not saving (\(reason)): snapshots require a ready software runtime; "
+                              + "GPU disk data persists without a RAM snapshot")
+            completion?(false)
+            return
+        }
         guard !isSavingState else {
             HuskLog.log("snap", "save already in progress; ignoring \(reason)")
             completion?(false); return
@@ -388,235 +378,22 @@ final class QemuRunner: ObservableObject {
                           + "\(QemuRunner.pendingSnapshotMiB) MiB); the picture freezes "
                           + "while RAM is written to disk")
 
-        // Off the main thread from here.
-        //
-        // Quiescing is three round trips to the guest plus five seconds of
-        // waiting for processes to actually die, and callers reach this from
-        // the UI. Doing that inline would freeze the interface for fifteen
-        // seconds and invite the watchdog to kill the app -- which would look
-        // exactly like the crash this whole path exists to avoid.
         DispatchQueue.global(qos: .userInitiated).async {
             self.performSave()
         }
     }
 
-    /// Bring Android's UI back after a snapshot stopped it.
-    ///
-    /// Stopping surfaceflinger and zygote is what makes a GL machine saveable,
-    /// so every GL save and every GL restore leaves a guest whose entire
-    /// framework is down: no system_server, no launcher, nothing drawing.
-    /// Starting them again is not a courtesy, it is the other half of the
-    /// operation, and until it finishes the screen is black no matter how well
-    /// the GPU path works.
-    ///
-    /// This used to be two fire-and-forget setprops. The first blocked for its
-    /// entire 60-second timeout -- the guest had only just been resumed and the
-    /// bridge was not answering yet -- and the second was swallowed by `try?`
-    /// and never reached the guest at all. The log then announced "compositor
-    /// and app processes restarted" over a guest where init had processed
-    /// exactly one ctl.start, for surfaceflinger, while zygote stayed dead.
-    /// Android was a black screen from that moment on and nothing said so.
-    ///
-    /// So it retries, and it confirms against init's own view of each service
-    /// rather than against whether a setprop happened to return.
-    @discardableResult
-    nonisolated func startAndroidUI(why: String) -> Bool {
-        var allUp = true
-        // The snapshot already on disk was saved the old way, with zygote
-        // stopped -- so it restores into a machine with no Android framework.
-        // Starting only the compositor would leave it that way: a black screen
-        // with nothing behind it, which is worse than the bug this fixes.
-        //
-        // Asking init whether zygote is running costs one round trip and makes
-        // both shapes of snapshot work. New ones answer "running" and nothing
-        // happens; old ones get their framework back.
-        var services = ["surfaceflinger"]
-        if let state = try? GuestBridge.shared.shell("getprop init.svc.zygote", timeout: 20),
-           !state.contains("running") {
-            HuskLog.log("snap", "this snapshot was saved with the framework stopped; "
-                              + "starting zygote as well")
-            services.append("zygote")
-        }
-        for svc in services {
-            var up = false
-            for attempt in 1...4 {
-                _ = try? GuestBridge.shared.run("setprop ctl.start \(svc)", timeout: 20)
-                // init.svc.<name> is init's own answer, and the only thing that
-                // tells "the command was delivered" apart from "it worked".
-                for _ in 1...15 {
-                    if let state = try? GuestBridge.shared.shell(
-                            "getprop init.svc.\(svc)", timeout: 20),
-                       state.contains("running") {
-                        up = true
-                        break
-                    }
-                    Thread.sleep(forTimeInterval: 1)
-                }
-                if up {
-                    HuskLog.log("snap", "\(svc) is running again"
-                                      + (attempt > 1 ? " (attempt \(attempt))" : ""))
-                    break
-                }
-                HuskLog.log("snap", "\(svc) did not come up on attempt \(attempt)")
-            }
-            if !up {
-                HuskLog.log("snap", "\(svc) could NOT be restarted; "
-                                  + "the screen will stay black until the app is relaunched")
-                allUp = false
-            }
-        }
-        HuskLog.log("snap", allUp ? "Android's UI is running again (\(why))"
-                                  : "Android's UI did not fully come back (\(why))")
-        return allUp
-    }
-
     private func performSave() {
-        let completion = QemuRunner.saveCompletion
-
-        // With a GPU, saving is only safe once the guest owns no 3D resources.
-        //
-        // virglrenderer holds those on the host and none of them are written to
-        // the snapshot, so a machine saved while SurfaceFlinger is running comes
-        // back believing in textures and contexts that no longer exist. Stopping
-        // the framework closes every DRM file and frees them with it, leaving
-        // only the kernel's 2D framebuffer -- which virtio_gpu_save does write.
-        //
-        // This is the promise the patched migration blocker is trusting, so it
-        // happens here, next to the save, rather than anywhere a caller could
-        // forget it. The framework is started again on the way out and, more
-        // importantly, by whoever restores this snapshot.
-        if QemuRunner.glProven {
-            HuskLog.log("snap", "stopping the compositor and app processes so no 3D "
-                              + "resources are live while the machine is written")
-            // Named services, never a blanket `stop`.
-            //
-            // `stop` acts on whole init classes, and Husk's own command bridge
-            // is an init service too -- stopping it would take away the only
-            // channel able to start anything again, leaving a black screen and
-            // no way back. ctl.stop names one service and can only ever affect
-            // that service, so the bridge is safe by construction.
-            //
-            // Zygote first: it owns the app processes, and each of those holds
-            // its own EGL contexts. SurfaceFlinger last, because it is what the
-            // apps are talking to.
-            // Every stop must actually succeed. Asking whether the bridge is
-            // still alive proves nothing: SELinux refuses ctl.stop from
-            // u:r:shell:s0 --
-            //
-            //   avc: denied { set } for property=ctl.stop$zygote
-            //        scontext=u:r:shell:s0 tcontext=u:object_r:ctl_stop_prop:s0
-            //
-            // -- so all three calls can fail while the shell keeps answering
-            // happily. That is how a save once went ahead with SurfaceFlinger
-            // still holding 3D resources, which is precisely the case the
-            // migration blocker exists to prevent.
-            var quiesced = true
-            // Check the bridge before committing to any of this.
-            //
-            // The quiesce is three round trips at sixty seconds each, and with a
-            // silent guest that is three minutes of a frozen "Saving…" with no
-            // end. The last session did exactly that: the shell had stopped
-            // answering at about ninety seconds, the save was asked for at a
-            // hundred and forty, and it never printed another line.
-            guard GuestBridge.shared.isAlive(attempts: 2) else {
-                HuskLog.log("snap", "not saving: the Android shell is not answering, "
-                                  + "so the compositor cannot be stopped first and a "
-                                  + "GPU machine cannot be written safely")
-                let done = QemuRunner.saveCompletion
-                QemuRunner.saveCompletion = nil
-                Task { @MainActor in
-                    QemuRunner.shared.isSavingState = false
-                    done?(false)
-                }
-                return
+        // Defense at the last Swift boundary before QEMU. Never stop Android
+        // services to make GPU resources appear migratable.
+        guard snapshotSavingSupported else {
+            let done = QemuRunner.saveCompletion
+            QemuRunner.saveCompletion = nil
+            DispatchQueue.main.async {
+                QemuRunner.shared.isSavingState = false
+                done?(false)
             }
-
-            // surfaceflinger only. Zygote stays.
-            //
-            // Stopping zygote kills system_server with it, so a GPU snapshot was
-            // being taken of a machine with no Android framework -- and on
-            // restore we started zygote again, system_server came up fresh, and
-            // re-initialised ConnectivityService against a netd that had been
-            // running the whole time and remembered a different world. The two
-            // disagree, the network never registers, and netd's per-uid routing
-            // then has no default network to point at. uid 2000's writes go
-            // nowhere while the socket stays open: commands arrive, answers do
-            // not, and the bridge dies about a minute after every restore.
-            //
-            // That is why this only ever happened in GPU mode. Software snapshots
-            // never stopped anything, so they froze and thawed a whole, running,
-            // self-consistent framework -- which is exactly what worked.
-            //
-            // The compositor alone is what has to be quiet for the save: it owns
-            // the scanout. Apps may still hold 3D resources, and virtio_gpu_save
-            // now skips those safely rather than dereferencing them, which is the
-            // patch that made this choice available.
-            // Close the apps first, without touching the framework.
-            //
-            // Keeping zygote alive fixed networking, and cost something I did
-            // not account for: every running app keeps its own 3D resources, and
-            // virtio_gpu_save skips those because they cannot be serialised. The
-            // restored guest then believes in resource ids the host has never
-            // heard of, and says so:
-            //
-            //   [drm:virtio_gpu_dequeue_ctrl_func] *ERROR* response 0x1203
-            //
-            // -- INVALID_RESOURCE_ID, against SET_SCANOUT and RESOURCE_UNREF.
-            // That is a guest whose display stack is wedged, which is what the
-            // instability after 0.2.0 actually is.
-            //
-            // `am kill-all` closes background apps and leaves system_server and
-            // netd untouched, so the GPU state goes away without the framework
-            // restart that broke the network. Both halves, rather than trading
-            // one for the other.
-            // Two ways to clear the GPU before a save, and they trade against
-            // each other. Closing apps leaves system_server and netd running,
-            // so the network survives the restore -- but anything the framework
-            // itself still holds is skipped by virtio_gpu_save and comes back
-            // as INVALID_RESOURCE_ID. Stopping zygote takes the framework down
-            // with it, which clears everything and costs the network, because
-            // system_server then restarts against a netd that did not.
-            //
-            // Which is better depends on what is breaking today, so it is a
-            // setting rather than a decision baked in here.
-            var toStop = ["surfaceflinger"]
-            if QemuRunner.keepNetworkAcrossSaves {
-                if let r = try? GuestBridge.shared.run("am kill-all", timeout: 60) {
-                    HuskLog.log("snap", "closed background apps before saving "
-                                      + "(exit \(r.status)); the framework stays up")
-                }
-            } else {
-                HuskLog.log("snap", "stopping the framework as well; the network "
-                                  + "will need to re-register after the restore")
-                toStop = ["zygote", "surfaceflinger"]
-            }
-
-            for svc in toStop {
-                let r = try? GuestBridge.shared.run("setprop ctl.stop \(svc)", timeout: 60)
-                if (r?.status ?? -1) != 0 {
-                    HuskLog.log("snap", "could not stop \(svc): "
-                              + (r?.out.trimmingCharacters(in: .whitespacesAndNewlines)
-                                 ?? "no answer"))
-                    quiesced = false
-                }
-            }
-
-            if !quiesced {
-                HuskLog.log("snap", "REFUSING to save: the GPU could not be quiesced, and "
-                                  + "saving with live 3D resources crashes the process "
-                                  + "outright. The guest is untouched.")
-                QemuRunner.saveCompletion = nil
-                DispatchQueue.main.async {
-                    QemuRunner.shared.isSavingState = false
-                    completion?(false)
-                }
-                return
-            }
-
-            // ctl.stop returns as soon as init has been told, not once the
-            // process has died and its buffers have been released.
-            Thread.sleep(forTimeInterval: 5)
-            HuskLog.log("snap", "compositor and app processes stopped")
+            return
         }
 
         husk_snapshot_save { ok, what in
@@ -626,7 +403,7 @@ final class QemuRunner: ObservableObject {
                 try? String(QemuRunner.pendingSnapshotMiB)
                     .write(toFile: QemuRunner.shared.snapshotSizePath,
                            atomically: true, encoding: .utf8)
-                try? QemuRunner.memoryStrategy
+                try? QemuRunner.runningMemoryStrategy
                     .write(toFile: QemuRunner.shared.memoryStrategyPath,
                            atomically: true, encoding: .utf8)
                 // Stamp the display this machine belongs to, so a later launch
@@ -635,26 +412,6 @@ final class QemuRunner: ObservableObject {
                 try? QemuRunner.machineStamp
                     .write(toFile: QemuRunner.shared.snapshotDisplayPath,
                            atomically: true, encoding: .utf8)
-            }
-            if QemuRunner.glProven {
-                // Whether or not the save worked. A guest left with its
-                // compositor stopped is a black screen, and a failed save is
-                // not a reason to hand someone one of those.
-                //
-                // Off this thread, and that is not a nicety.
-                //
-                // husk_snapshot_save() calls back on QEMU's own thread -- the
-                // thread that runs the machine. startAndroidUI() then makes
-                // blocking round trips to a guest that cannot answer, because
-                // answering needs the very thread that is waiting. It ends only
-                // when every timeout inside expires, and the retries added to
-                // make the restart reliable turned that from one minute into
-                // several. What that looks like from outside is a frozen picture
-                // and a save that never finishes, minutes after the log already
-                // said "save succeeded".
-                DispatchQueue.global(qos: .userInitiated).async {
-                    QemuRunner.shared.startAndroidUI(why: "after saving")
-                }
             }
             let done = QemuRunner.saveCompletion
             QemuRunner.saveCompletion = nil
@@ -699,7 +456,10 @@ final class QemuRunner: ObservableObject {
         // rather than failing to restore.
         GuestImage.shared.hasShippedSnapshot
             ? "shipped-snapshot-v10"
-            : "file-backed-lineage-v2-" + QemuRunner.machineStamp
+            : "file-backed-lineage-v2-" + (glProven ? "gl" : "sw")
+                + (soundEnabled ? "+snd" : "")
+                + (landscapeGuest ? "+land" : "")
+                + (customResolution.map { "+\($0.w)x\($0.h)" } ?? "")
     }
 
     /// Whether guest RAM can be backed by a file on this device, this run.
@@ -939,8 +699,7 @@ final class QemuRunner: ObservableObject {
             != QemuRunner.memoryStrategy
         if strategyChanged, FileManager.default.fileExists(atPath: snapshotSizePath) {
             HuskLog.log("qemu", "memory layout changed to \(QemuRunner.memoryStrategy); "
-                              + "retiring the old snapshot, so this boot is a cold one")
-            try? FileManager.default.removeItem(atPath: snapshotSizePath)
+                              + "leaving old snapshot metadata intact and using a fresh memory budget")
         }
 
         if !strategyChanged,
@@ -1346,19 +1105,19 @@ final class QemuRunner: ObservableObject {
     private func run() {
         probeGL()
         let args = (profile == .phase0Alpine) ? phase0Arguments() : phase1Arguments()
+        let runningPolicy = RuntimeSnapshotPolicy(arguments: args)
+        QemuRunner.runningSnapshotPolicy = runningPolicy
+        if let memoryMiB = runningPolicy.memoryMiB { lastGuestMiB = memoryMiB }
+        if let width = runningPolicy.width, let height = runningPolicy.height {
+            QemuRunner.lastGuestRes = (width, height)
+        }
+        QemuRunner.runningMemoryStrategy = QemuRunner.memoryStrategy
         HuskLog.log("qemu", "profile: \(profile.rawValue)")
         HuskLog.log("qemu", "DISPLAY MODE: "
                           + (QemuRunner.glProven ? "GPU (virtio-gpu-gl)"
                                                  : "software (CPU framebuffer)"))
         if QemuRunner.glProven {
-            // This used to say the GPU and fast relaunch were mutually
-            // exclusive, because QEMU refuses to snapshot a virgl machine:
-            // "virgl is not yet migratable". Husk now lifts that blocker and
-            // saves with the Android framework stopped, so the only host GPU
-            // state left is state nothing will miss. See the virtio-gpu patches
-            // in scripts/integrate_husk.sh for why that is sound.
-            HuskLog.log("qemu", "GPU display with snapshots: saving stops the "
-                              + "compositor first, and restoring starts it again")
+            HuskLog.log("qemu", "GPU snapshots disabled; Android services stay running and disk writes persist")
         }
 
         QemuRunner.bootGuestRes = QemuRunner.lastGuestRes
@@ -1403,11 +1162,8 @@ final class QemuRunner: ObservableObject {
         var argv: [UnsafeMutablePointer<CChar>?] = args.map { strdup($0) }
         argv.append(nil)
 
-        // Waive virgl's migration blocker. Husk's patched virtio-gpu-base.c
-        // keeps the blocker for everyone who does not set this, because it is
-        // only safe alongside the stop-the-framework-before-saving discipline
-        // in saveState().
-        if QemuRunner.glProven { setenv("HUSK_VIRGL_SNAPSHOT", "1", 1) }
+        // Keep QEMU's GPU migration blocker active as an additional safeguard.
+        unsetenv("HUSK_VIRGL_SNAPSHOT")
 
         HuskLog.log("qemu", "calling qemu_init() -- JIT allocation happens inside this")
         argv.withUnsafeMutableBufferPointer { buf in
@@ -1468,37 +1224,20 @@ final class QemuRunner: ObservableObject {
                               + "guest; booting cold rather than failing a restore")
         }
 
-        // The display device is part of the machine too.
-        //
-        // A shipped snapshot carries no display stamp and was always saved on
-        // the software framebuffer, so treat a missing stamp as "sw". Restoring
-        // across a mismatch is the failure that put GL behind a flag in the
-        // first place: Android comes back alive and holding resource ids that
-        // the new renderer never created, and nothing is ever drawn again.
-        let wantDisplay = QemuRunner.machineStamp
-        let haveDisplay = QemuRunner.shared.snapshotDisplay ?? "sw"
-        let displayFits = (wantDisplay == haveDisplay)
+        let policy = QemuRunner.runningSnapshotPolicy!
+        let savedStamp = snapshotDisplay
+        let displayFits = policy.canRestore(savedStamp: savedStamp,
+            hasLocalSnapshot: hasSnapshot)
         if !displayFits {
-            HuskLog.log("qemu", "saved machine is a \(haveDisplay) machine and this one is "
-                              + "\(wantDisplay); booting cold and saving a new one")
+            HuskLog.log("qemu", "snapshot hardware identity is missing, legacy, different, or GPU; "
+                              + "cold booting the current disk without restoring older userdata")
         }
         let restored = snapshotFits && displayFits && husk_snapshot_load_at_startup()
         HuskLog.log("qemu", restored
-            ? "restored a saved machine -- Android is already booted"
-            : "no saved machine; booting Android from cold")
+            ? "restored a compatible software snapshot; userdata matches that saved state"
+            : "booting Android from its current disk state")
         QemuRunner.didRestore = restored
         DispatchQueue.main.async { QemuRunner.shared.restoredFromSnapshot = restored }
-        if restored && QemuRunner.glProven {
-            // A GL snapshot was necessarily taken with the compositor stopped,
-            // so it restores into a machine with nothing drawing. Starting it
-            // again is what turns the restore back into a running phone, and it
-            // is also the moment SurfaceFlinger builds its 3D context against
-            // the renderer this process just created.
-            Thread.detachNewThread {
-                HuskLog.log("qemu", "restored a GL machine; starting the compositor")
-                QemuRunner.shared.startAndroidUI(why: "after restoring")
-            }
-        }
         HuskLog.logFootprint("after-qemu-init")
 
         // Must happen after qemu_init (the console does not exist before it) and
@@ -1536,6 +1275,7 @@ final class QemuRunner: ObservableObject {
         HuskLog.log("qemu", "qemu_main_loop() RETURNED -- guest stopped")
         HuskLog.logFootprint("after-main-loop")
         qemu_cleanup()
+        QemuRunner.qemuReady = false
         HuskLog.log("qemu", "qemu_cleanup() done")
         isRunning = false
     }
@@ -1636,7 +1376,7 @@ final class QemuRunner: ObservableObject {
                 // evidence attached -- by the rule it should have fired at 165s
                 // in the last session and there is nothing to say what stopped
                 // it.
-                if settled, QemuRunner.autoSaveEnabled, !QemuRunner.snapshotRequested,
+                if settled, QemuRunner.shared.automaticSnapshotSavingAllowed, !QemuRunner.snapshotRequested,
                    QemuRunner.shared.hasUsableSnapshot || !(quietWindows >= 3 || overdue) {
                     HuskLog.log("snap", "not saving yet: quiet=\(quietWindows) "
                               + "overdue=\(overdue) "
@@ -1644,21 +1384,13 @@ final class QemuRunner: ObservableObject {
                               + "(display \(QemuRunner.shared.snapshotDisplay ?? "none"))")
                 }
                 if settled, quietWindows >= 3 || overdue,
-                   QemuRunner.autoSaveEnabled,
+                   QemuRunner.shared.automaticSnapshotSavingAllowed,
                    !QemuRunner.snapshotRequested,
                    !QemuRunner.shared.hasUsableSnapshot {
                     QemuRunner.snapshotRequested = true
-                    // Through saveState, never husk_snapshot_save directly.
-                    //
-                    // This called the C function straight, which meant it also
-                    // skipped everything saveState does around it -- above all
-                    // stopping the compositor first. On the GPU that is not an
-                    // omission but a fault: the save walked into live 3D
-                    // resources and took the process down with SIGSEGV. The
-                    // discipline has to live on the one path every save takes,
-                    // not beside it.
+                    // Central policy rechecks the running hardware before saving.
                     DispatchQueue.main.async {
-                        QemuRunner.shared.saveState(reason: "Android is booted and settled")
+                        QemuRunner.shared.saveState(reason: "Android is booted and settled", automatic: true)
                     }
                 }
 

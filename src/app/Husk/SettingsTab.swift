@@ -38,7 +38,7 @@ struct SettingsTab: View {
                     row(AndroidRuntimeSettings(), "shippingbox.fill", .green, "Runtime Setup", "Download and manage the Android runtime")
                     row(PerformanceSettings(), "speedometer", .orange, "Performance", "GPU renderer and sound")
                     row(InputSettings(), "hand.tap.fill", .indigo, "Display & Input", "Runtime resolution, orientation and touch")
-                    row(NetworkSettings(), "globe", .green, "Network", "Internet and saved sessions")
+                    row(NetworkSettings(), "globe", .green, "Network", "Android internet access")
                     row(SavedMachineSettings(), "externaldrive.fill", .teal, "Saved Runtime", "Snapshots and automatic saving")
                 } header: {
                     Text("Compatibility Runtime")
@@ -148,9 +148,8 @@ struct LibrarySettings: View {
                 }
                 .disabled(working || !host.isReady)
             } footer: {
-                Text("Names and icons come from Android's own launcher, which keeps "
-                   + "the version it draws. Re-fetching throws away APK Container's copies and "
-                   + "asks again.")
+                Text("Names and icons are read from the installed APKs. Re-fetching clears "
+                   + "APK Container's cached copies and reads the APK metadata again.")
             }
         }
         .huskForm()
@@ -472,25 +471,8 @@ struct InputSettings: View {
 // MARK: - Network
 
 struct NetworkSettings: View {
-    @State private var keepNetwork =
-        UserDefaults.standard.object(forKey: "husk.keepNetwork") as? Bool ?? true
-
     var body: some View {
         Form {
-            Section {
-                Toggle("Keep the network across saves", isOn: $keepNetwork)
-                    .onChange(of: keepNetwork) { v in
-                        UserDefaults.standard.set(v, forKey: "husk.keepNetwork")
-                    }
-            } footer: {
-                Text(keepNetwork
-                     ? "Saving closes apps but leaves Android's framework running, so "
-                     + "the network still works after a restore."
-                     : "Saving stops the framework too. Clears every GPU resource, "
-                     + "which is steadier — but the network may not come back until a "
-                     + "cold boot.")
-            }
-
             Section {
                 Text("Android reaches the internet through a virtual ethernet card "
                    + "on QEMU's own network. Nothing on your phone's network can see "
@@ -673,8 +655,6 @@ struct SavedMachineSettings: View {
     @ObservedObject private var runner = QemuRunner.shared
     @State private var autoSave =
         UserDefaults.standard.object(forKey: "husk.autoSave") as? Bool ?? true
-    @State private var useSnapshot =
-        UserDefaults.standard.object(forKey: "husk.downloadSnapshot") as? Bool ?? true
     @State private var askWhichToDelete = false
     @State private var deleteResult: String?
     @State private var askRemoveAndroid = false
@@ -685,7 +665,7 @@ struct SavedMachineSettings: View {
     var body: some View {
         Form {
             Section {
-                Toggle("Save automatically", isOn: $autoSave)
+                Toggle("Save software runtime automatically", isOn: $autoSave)
                     .onChange(of: autoSave) { v in
                         UserDefaults.standard.set(v, forKey: "husk.autoSave")
                         HuskLog.log("ui", v ? "automatic saving on" : "automatic saving off")
@@ -696,12 +676,12 @@ struct SavedMachineSettings: View {
                     Label(runner.isSavingState ? "Saving…" : "Save now",
                           systemImage: "externaldrive.badge.checkmark")
                 }
-                .disabled(runner.isSavingState)
+                .disabled(runner.isSavingState || !runner.isRunning || !runner.snapshotSavingSupported)
             } footer: {
-                Text("APK Container restores a saved machine instead of booting it, which takes "
-                   + "seconds rather than minutes. The picture freezes while it writes. "
-                   + "With this off, nothing saves by itself — including after an "
-                   + "install.")
+                Text("GPU runtime snapshots are disabled because stopping Android’s display "
+                   + "can crash its apps. Installed APKs and app data remain on the Android disk. "
+                   + "Software runtime snapshots are available; restoring one returns Android "
+                   + "and its app data to the saved point.")
             }
 
             Section {
@@ -715,20 +695,17 @@ struct SavedMachineSettings: View {
             } footer: {
                 Text(QemuRunner.shared.hasSnapshot
                      ? "Currently saved: "
-                     + ((QemuRunner.shared.snapshotDisplay ?? "sw").contains("gl")
+                     + (RuntimeSnapshotPolicy.displayMode(of: QemuRunner.shared.snapshotDisplay ?? "sw") == "gl"
                         ? "GPU" : "software") + "."
                      : "Nothing is saved, so Android boots from cold.")
             }
 
             Section {
-                Toggle("Download pre-booted snapshot", isOn: $useSnapshot)
-                    .onChange(of: useSnapshot) { v in
-                        UserDefaults.standard.set(v, forKey: "husk.downloadSnapshot")
-                    }
+                Label("Start from the Android disk", systemImage: "internaldrive")
             } footer: {
-                Text("Adds about 2 GB to the first download. It was captured on the "
-                   + "software renderer, so it is not used on GPU — which cold-boots "
-                   + "once and then saves its own.")
+                Text("Older and downloaded RAM snapshots are incompatible with this build. "
+                   + "Android starts from its current disk, keeping installed APKs and app data. "
+                   + "The first start can take several minutes.")
             }
 
             Section {
@@ -749,7 +726,7 @@ struct SavedMachineSettings: View {
             Section {
                 Toggle("Ask about Android updates", isOn: $askUpdates)
             } footer: {
-                Text("When a new Android image or snapshot is published, APK Container asks once whether to download it. "
+                Text("When a new Android system image is published, APK Container asks once whether to download it. "
                    + "Never asked before Android has been downloaded.")
             }
         }
@@ -761,7 +738,7 @@ struct SavedMachineSettings: View {
             Button("Software machine", role: .destructive) { forget("sw", "software") }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("Android will boot from cold once, then save a new one.")
+            Text("Android will boot from its current disk. This does not remove installed APKs or app data.")
         }
         .confirmationDialog("Remove Android?", isPresented: $askRemoveAndroid, titleVisibility: .visible) {
             Button("Remove Android", role: .destructive) {

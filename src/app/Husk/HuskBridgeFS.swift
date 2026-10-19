@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import Foundation
-import SQLite3
 import UIKit
 
 /// The host half of the host/guest bridge.
@@ -971,17 +970,8 @@ final class AndroidHost: ObservableObject {
                 .filter { $0.hasPrefix("package:") }
                 .map { String($0.dropFirst("package:".count)) }
                 .filter { !$0.isEmpty }
-            // Android's own labels and icons, in one round trip for every app
-            // at once, before anything is put on screen.
-            let known = names.isEmpty ? [:] : await self.launcherCatalogue()
-            var labels: [String: String] = [:]
-            for (package, entry) in known {
-                if let label = entry.label { labels[package] = label }
-                guard let icon = entry.icon else { continue }
-                let dest = Self.iconDirectory.appendingPathComponent("\(package).png")
-                try? icon.write(to: dest)
-            }
-
+            // Read app labels and icons from their APK resources below. A desktop
+            // launcher and its private database are not part of this library.
             await MainActor.run {
                 guard !names.isEmpty || self.packages.isEmpty
                         || self.guestListedPackages else {
@@ -1001,7 +991,7 @@ final class AndroidHost: ObservableObject {
                         $0 == Self.pretty(name) ? nil : $0
                     }
                     return Package(name: name,
-                                   label: labels[name] ?? resolved ?? Self.pretty(name),
+                                   label: resolved ?? Self.pretty(name),
                                    iconPath: FileManager.default.fileExists(atPath: cached.path)
                                              ? cached.path : nil)
                 }
@@ -1015,141 +1005,6 @@ final class AndroidHost: ObservableObject {
         } catch {
             HuskLog.log("bridge", "could not list packages: \(error.localizedDescription)")
         }
-    }
-
-    /// What Android itself calls these apps, and what it draws for them.
-    ///
-    /// Both used to be guesses. The name was the last component of the package
-    /// with a capital letter on it, so `com.dotgears.flappybird` became
-    /// "Flappybird"; the icon was the largest PNG in the APK whose path
-    /// happened to contain "launcher" or "icon", which finds a notification
-    /// icon about as often as the real one and finds nothing at all when the
-    /// launcher icon is an adaptive XML drawable -- which, since Android 8, is
-    /// most of them.
-    ///
-    /// Android has already answered both questions properly. The launcher
-    /// resolves every app's label and composites its icon once, at the size it
-    /// draws it, and caches the pair in a SQLite database. Reading that is
-    /// asking Android rather than second-guessing it: adaptive icons arrive
-    /// already composited and masked, themed icons arrive themed, and the label
-    /// is the one on the home screen, in the user's language.
-    ///
-    /// The database is pulled and read here rather than queried in the guest
-    /// because iOS ships SQLite and the guest is not guaranteed to ship the
-    /// `sqlite3` binary. A few hundred kilobytes over the bridge once a session
-    /// is cheaper than depending on what a given Android build includes.
-    nonisolated private func launcherCatalogue() async
-            -> [String: (label: String?, icon: Data?)] {
-        var found: [String: (label: String?, icon: Data?)] = [:]
-        do {
-            let listing = try GuestBridge.shared.shell(
-                "ls -1 /data/data/*/databases/app_icons.db 2>/dev/null | head -1",
-                timeout: 30)
-            let path = listing.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard path.hasPrefix("/"), path.hasSuffix(".db") else {
-                // Which of the two reasons it is matters: an agent without root
-                // cannot read /data/data at all, and that is a different fix
-                // from a launcher that keeps its cache somewhere else.
-                let who = (try? GuestBridge.shared.shell("id -u; ls -d /data/data/* "
-                                                       + "2>&1 | head -2", timeout: 20)) ?? ""
-                HuskLog.log("bridge", "no launcher icon cache; the APKs it is. "
-                          + who.replacingOccurrences(of: "\n", with: " | "))
-                return [:]
-            }
-
-            let db = try GuestBridge.shared.pull("cat \(path)", timeout: 120)
-            guard db.prefix(6) == Data("SQLite".utf8) else {
-                HuskLog.log("bridge", "\(path) is not a SQLite file (\(db.count) bytes)")
-                return [:]
-            }
-            let local = Self.support.appendingPathComponent("launcher-icons.db")
-            try? FileManager.default.removeItem(at: local)
-            try db.write(to: local)
-
-            // Android opens its databases in WAL mode, so the newest rows --
-            // an app installed this session, most of all -- are in the sidecar
-            // rather than the file itself. Brought along so SQLite can replay
-            // it; harmless when there is nothing to replay.
-            if let wal = try? GuestBridge.shared.pull("cat \(path)-wal", timeout: 120),
-               wal.count > 32 {
-                try? wal.write(to: Self.support.appendingPathComponent(
-                    "launcher-icons.db-wal"))
-            }
-
-            found = Self.readIconCache(at: local)
-            HuskLog.log("bridge", "launcher cache: \(found.count) app(s) named by Android")
-        } catch {
-            HuskLog.log("bridge", "launcher cache unavailable: "
-                      + error.localizedDescription)
-        }
-        return found
-    }
-
-    /// Read the pulled cache. One row per launcher activity: the component it
-    /// belongs to, the label under it, and the icon as a compressed bitmap.
-    nonisolated private static func readIconCache(at url: URL)
-            -> [String: (label: String?, icon: Data?)] {
-        var out: [String: (label: String?, icon: Data?)] = [:]
-        var handle: OpaquePointer?
-        // Read-write, because replaying the write-ahead log is a write.
-        guard sqlite3_open_v2(url.path, &handle, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK
-        else {
-            sqlite3_close(handle)
-            return [:]
-        }
-        defer { sqlite3_close(handle) }
-
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(handle, "SELECT componentName, label, icon FROM icons",
-                                 -1, &stmt, nil) == SQLITE_OK else {
-            // Say what the file does contain rather than only that it did not
-            // contain what was expected: if a future Android renames the table,
-            // this log is the whole diagnosis.
-            var tables: OpaquePointer?
-            var names: [String] = []
-            if sqlite3_prepare_v2(handle, "SELECT name FROM sqlite_master WHERE type='table'",
-                                  -1, &tables, nil) == SQLITE_OK {
-                while sqlite3_step(tables) == SQLITE_ROW {
-                    if let t = sqlite3_column_text(tables, 0) { names.append(String(cString: t)) }
-                }
-            }
-            sqlite3_finalize(tables)
-            HuskLog.log("bridge", "icon cache has no icons table; tables: "
-                      + (names.isEmpty ? "none" : names.joined(separator: ", ")))
-            return [:]
-        }
-        defer { sqlite3_finalize(stmt) }
-
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            guard let raw = sqlite3_column_text(stmt, 0) else { continue }
-            // "ComponentInfo{com.x.y/com.x.y.Main}" or plain "com.x.y/.Main".
-            let component = String(cString: raw)
-                .replacingOccurrences(of: "ComponentInfo{", with: "")
-                .replacingOccurrences(of: "}", with: "")
-            guard let package = component.split(separator: "/").first.map(String.init),
-                  !package.isEmpty else { continue }
-
-            let label = sqlite3_column_text(stmt, 1).map { String(cString: $0) }
-            var icon: Data?
-            if let bytes = sqlite3_column_blob(stmt, 2) {
-                let n = Int(sqlite3_column_bytes(stmt, 2))
-                // The launcher flattens the bitmap before storing it, so this
-                // is a PNG (or a lossless WebP on newer builds). Anything else
-                // is a format we would only guess at.
-                if n > 16 {
-                    let data = Data(bytes: bytes, count: n)
-                    if data.prefix(4) == Data([0x89, 0x50, 0x4E, 0x47])
-                        || data.prefix(4) == Data("RIFF".utf8) { icon = data }
-                }
-            }
-
-            // First row wins per package, except that a row with an icon beats
-            // one without: an app can have several launcher entries and only
-            // the one the launcher drew has a bitmap against it.
-            if let existing = out[package], existing.icon != nil, icon == nil { continue }
-            out[package] = (label?.isEmpty == false ? label : nil, icon)
-        }
-        return out
     }
 
     /// Version, size, ABI and category for every app, in one round trip.
@@ -1300,13 +1155,8 @@ final class AndroidHost: ObservableObject {
 
     /// Ask an app what it is called and what it looks like.
     ///
-    /// Three sources, in descending order of how much Android has already done
-    /// for us. The launcher's icon cache is best -- it holds the composited,
-    /// masked, themed bitmap and the resolved label -- but it lives under
-    /// /data/data and needs root, which is not always what the agent has. So
-    /// the one that has to work is this: the APK's own manifest and resource
-    /// table, read the way `aapt` reads them, which needs nothing but the file
-    /// itself. Only if that fails does it fall back to guessing at filenames.
+    /// Resolve the APK's manifest and resource table without a launcher or root-only
+    /// icon database. Only if those resources cannot be resolved do filenames provide a fallback.
     nonisolated private func fetchAppInfo(for package: String) async {
         let dest = Self.iconDirectory.appendingPathComponent("\(package).png")
         let haveIcon = FileManager.default.fileExists(atPath: dest.path)
@@ -1524,11 +1374,6 @@ final class AndroidHost: ObservableObject {
         }
     }
 
-    /// Remove an app from the guest.
-    ///
-    /// Not followed by an automatic save, unlike installing. Removing something
-    /// is the kind of change a person may want to reconsider before it is made
-    /// permanent, and a snapshot is how it becomes permanent.
     /// Install an APK that is already in the guest.
     ///
     /// Nothing is copied: the file is on Android's own storage, so `pm` reads
@@ -1694,48 +1539,28 @@ final class AndroidHost: ObservableObject {
                 }
                 await self?.refreshPackages()
 
-                // Persist it, or it is gone on the next launch.
-                //
-                // Husk restores a saved machine instead of booting, and
-                // restoring rewinds the userdata disk to the state the snapshot
-                // was taken in. An app installed after that point lives only in
-                // this session: the library lists it now and will not list it
-                // tomorrow. Saving over the snapshot is what makes the install
-                // real, so it is part of installing rather than a thing to
-                // remember to do afterwards.
+                // The APK is already on Android's userdata disk. Software rendering
+                // may refresh its restore checkpoint; GPU snapshots are unsafe because
+                // stopping SurfaceFlinger can kill the Android framework mid-install.
                 if ok {
                     await MainActor.run {
-                        // Automatic saves being off means off. This save is as
-                        // automatic as the one after boot -- it freezes the
-                        // picture for fifteen seconds without being asked --
-                        // and someone who turned that off did not mean "except
-                        // after installing".
-                        guard QemuRunner.autoSaveEnabled else {
-                            HuskLog.log("bridge", "\(name) installed; not saving, "
-                                      + "automatic saves are off")
+                        guard QemuRunner.shared.automaticSnapshotSavingAllowed else {
+                            HuskLog.log("bridge", "\(name) installed on disk; no automatic runtime snapshot")
                             self?.busy = nil
-                            self?.say("APK installed",
-                                      "Save Android to keep it past this session.")
+                            self?.say("APK installed", QemuRunner.shared.snapshotSavingSupported
+                                      ? "Ready to launch. Restoring an older saved runtime can undo this install."
+                                      : "Ready to launch. Saved to Android's storage.")
                             return
                         }
-
-                        // GPU mode can save now: the virgl blocker is lifted, the
-                        // compositor is stopped around the write, and the log
-                        // says "save succeeded". This used to tell people their
-                        // install was already lost, which is worse than saying
-                        // nothing -- it is a true-sounding statement that is no
-                        // longer true.
                         self?.busy = "Saving Android — the screen will freeze briefly"
-                        QemuRunner.shared.saveState(reason: "installed \(name)") { saved in
+                        QemuRunner.shared.saveState(reason: "installed \(name)", automatic: true) { saved in
                             self?.busy = nil
                             if saved {
                                 self?.say("APK installed", "Ready to launch.")
                             } else {
-                                HuskLog.log("bridge", "\(name) is installed but the machine "
-                                          + "was not saved; it will be gone next launch")
-                                self?.say("Installed, but not saved",
-                                          "It will be gone on the next launch.",
-                                          good: false)
+                                HuskLog.log("bridge", "\(name) installed on disk, but its runtime checkpoint was not saved")
+                                self?.say("APK installed",
+                                          "Ready to launch. Restoring an older saved runtime can undo this install.")
                             }
                         }
                     }
@@ -1898,11 +1723,7 @@ final class AndroidHost: ObservableObject {
         }
     }
 
-    /// Start an app by package name.
-    ///
-    /// monkey rather than `am start`, because it finds the launcher activity on
-    /// its own -- we do not know the activity name and would have to resolve it.
-    /// Note that an app was opened, for the "last used" line on its page.
+    /// Record an app opened from the native library.
     func markLaunched(_ pkg: String) {
         guard let i = packages.firstIndex(where: { $0.name == pkg }) else { return }
         packages[i].lastUsed = Date()
@@ -1940,33 +1761,19 @@ final class AndroidHost: ObservableObject {
         let installed = Set(packages.map(\.name))
         presentationTask = Task.detached(priority: .userInitiated) { [weak self] in
             do {
-                // Android 16's package shell supports query-activities --components; enumerate every HOME handler,
-                // not just Trebuchet, so replacing Android's default launcher cannot expose a desktop.
-                let homes = try GuestBridge.shared.run(
-                    "cmd package query-activities --components --user 0 -a android.intent.action.MAIN -c android.intent.category.HOME",
-                    timeout: 20)
-                let homePackages = AndroidAppPresentation.componentPackages(homes.out)
-                guard homes.status == 0, !homePackages.isEmpty else {
-                    throw PresentationError.message("Could not verify Android's launcher state. Try opening the app again.")
-                }
-                guard !homePackages.contains(pkg), !AndroidAppPresentation.knownLaunchers.contains(pkg) else {
-                    throw PresentationError.message("Android home launchers are hidden. Open an APK from Apps instead.")
-                }
-                guard !Task.isCancelled else { return }
-                let command = settings
-                    ? "am start -W -a android.settings.APPLICATION_DETAILS_SETTINGS -d package:\(pkg)"
-                    : "monkey -p \(pkg) -c android.intent.category.LAUNCHER 1"
-                let launched = try GuestBridge.shared.run(command, timeout: 60)
-                guard AndroidAppPresentation.launchSucceeded(status: launched.status, output: launched.out) else {
-                    throw PresentationError.message("Android could not launch this app. Check its installation and try again.")
-                }
+                let session = try await AndroidAppPresentation.start(
+                    package: pkg, settings: settings,
+                    run: { try GuestBridge.shared.run($0, timeout: $1) },
+                    cancelled: { Task.isCancelled },
+                    pause: { try await Task.sleep(nanoseconds: 2_000_000_000) },
+                    log: { HuskLog.log("bridge", $0) })
                 var firstForeground: String?
                 // A successful launch command can return before the first activity is resumed. Keep the guest covered.
                 let deadline = Date().addingTimeInterval(30)
                 while !Task.isCancelled, Date() < deadline {
-                    let foreground = try Self.readForegroundPackage()
-                    if AndroidAppPresentation.allows(foreground, requested: pkg, homePackages: homePackages,
-                                                     installedPackages: installed, allowSettings: settings, launching: true) {
+                    let foreground = try? Self.readForegroundPackage()
+                    if AndroidAppPresentation.allows(foreground, requested: pkg, homePackages: session.homePackages,
+                                                     installedPackages: installed, allowSettings: settings, launching: true, homesVerified: session.homesVerified) {
                         firstForeground = foreground
                         break
                     }
@@ -1974,7 +1781,7 @@ final class AndroidHost: ObservableObject {
                 }
                 guard !Task.isCancelled else { return }
                 guard let firstForeground else {
-                    throw PresentationError.message("The app did not reach the foreground. Its Android desktop has stayed hidden.")
+                    throw AndroidAppPresentation.LaunchError.message("The app did not reach the foreground. Android may still be restarting, or the app may have closed. The runtime display remains hidden.")
                 }
                 await MainActor.run {
                     guard let self, self.presentationID == request else { return }
@@ -1989,8 +1796,8 @@ final class AndroidHost: ObservableObject {
                 while !Task.isCancelled {
                     try await Task.sleep(nanoseconds: 1_000_000_000)
                     let foreground = try Self.readForegroundPackage()
-                    let allowed = AndroidAppPresentation.allows(foreground, requested: pkg, homePackages: homePackages,
-                                                                installedPackages: installed, allowSettings: settings, launching: false)
+                    let allowed = AndroidAppPresentation.allows(foreground, requested: pkg, homePackages: session.homePackages,
+                                                                installedPackages: installed, allowSettings: settings, launching: false, homesVerified: session.homesVerified)
                     await MainActor.run {
                         guard let self, self.presentationID == request else { return }
                         self.foregroundPackage = foreground
@@ -2006,6 +1813,7 @@ final class AndroidHost: ObservableObject {
                 await MainActor.run {
                     guard let self, self.presentationID == request else { return }
                     self.endAppPresentation()
+                    HuskLog.log("bridge", "App presentation failed: \(error.localizedDescription)")
                     self.say("App closed or unavailable", error.localizedDescription, good: false)
                 }
             }
@@ -2019,10 +1827,5 @@ final class AndroidHost: ObservableObject {
             "echo \(marker); dumpsys window displays | grep 'mCurrentFocus='", timeout: 10)
         guard result.status == 0, let range = result.out.range(of: marker, options: .backwards) else { return nil }
         return AndroidAppPresentation.foregroundPackage(String(result.out[range.upperBound...]))
-    }
-
-    private enum PresentationError: LocalizedError {
-        case message(String)
-        var errorDescription: String? { if case .message(let text) = self { return text }; return nil }
     }
 }

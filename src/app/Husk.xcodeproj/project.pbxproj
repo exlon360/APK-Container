@@ -185,6 +185,7 @@
 		F1E2ED25F28A24BA7197C5DB /* PipeShim.c in Sources */ = {isa = PBXBuildFile; fileRef = 766F6F7816E672E83CFFE47D /* PipeShim.c */; };
 		F2653F32A929D8E8BCEE057E /* husk-tl-dvm-audio.c in Sources */ = {isa = PBXBuildFile; fileRef = F58D55D1773275160F4F4717 /* husk-tl-dvm-audio.c */; };
 		F3989017EF86D4BD0D4D6DDA /* Compat15.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71DD2E2A2A0B0AB86EE783DD /* Compat15.swift */; };
+		F4478D31BFB1BEC6BDAB7176 /* RuntimeSnapshotPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = A99AEC85D6AE000EB6520C37 /* RuntimeSnapshotPolicy.swift */; };
 		F4833815482790E167401965 /* husk-tl-ld.c in Sources */ = {isa = PBXBuildFile; fileRef = 4D54C1E4F20A020AC62C9419 /* husk-tl-ld.c */; };
 		F6880CA30640F688356229CF /* HuskMetalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D91C1E7D6301EBCE06FEE0FE /* HuskMetalView.swift */; };
 		F6B3DA43CA16FAF920EF236D /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = D05B2EFC533719ED2E455C24 /* AppTheme.swift */; };
@@ -400,6 +401,7 @@
 		A45038B8E06A02311695BE90 /* LICENSE-idevice-MIT.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "LICENSE-idevice-MIT.txt"; sourceTree = "<group>"; };
 		A523DB1FEA5BC026771035C7 /* Shaders.metal */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.metal; path = Shaders.metal; sourceTree = "<group>"; };
 		A81352103CC22A0719104C2C /* husk-tl.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "husk-tl.h"; sourceTree = "<group>"; };
+		A99AEC85D6AE000EB6520C37 /* RuntimeSnapshotPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeSnapshotPolicy.swift; sourceTree = "<group>"; };
 		AA12F6AB59959C0162BB8928 /* husk-tl-dexindex.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-dexindex.c"; sourceTree = "<group>"; };
 		AAE77760F5BCF4EFAEFE146D /* Downloads.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Downloads.swift; sourceTree = "<group>"; };
 		AB426A5230A1E0CF10EE402F /* husk-tl-dvm-media.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-dvm-media.c"; sourceTree = "<group>"; };
@@ -562,6 +564,7 @@
 				79E4865C5FE44ADD210A4917 /* OnboardingView.swift */,
 				766F6F7816E672E83CFFE47D /* PipeShim.c */,
 				2E91A601F16886103BC482AB /* QemuRunner.swift */,
+				A99AEC85D6AE000EB6520C37 /* RuntimeSnapshotPolicy.swift */,
 				5D01B6F6F9B57E73E4B319F2 /* SaveBackup.swift */,
 				AE14E4B61CC873501D7EAE6E /* SettingsTab.swift */,
 				A523DB1FEA5BC026771035C7 /* Shaders.metal */,
@@ -1093,6 +1096,7 @@
 				22363DC2D857FB5CE998FAF1 /* PlayStoreManager.swift in Sources */,
 				4C11B3EFED23B912383D12E2 /* Protobuf.swift in Sources */,
 				5E4B0292717DAE8B0CAA99E4 /* QemuRunner.swift in Sources */,
+				F4478D31BFB1BEC6BDAB7176 /* RuntimeSnapshotPolicy.swift in Sources */,
 				DFF5B4345D574C8ECC39122F /* SaveBackup.swift in Sources */,
 				211C2D134F11C23EE4485A2E /* SettingsTab.swift in Sources */,
 				1624D7BE5D25504F10E6D705 /* Shaders.metal in Sources */,

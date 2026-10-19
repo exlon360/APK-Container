@@ -66,9 +66,11 @@ final class GuestImage: ObservableObject {
     /// Version shared by the blank userdata seed and downloaded snapshots.
     private static let userdataSeedVersion = "v10"
 
-    /// Whether to fetch the pre-booted snapshot rather than boot from cold.
+    /// The upstream RAM image has no compatible v2 hardware identity. Downloading
+    /// it would replace userdata without providing a usable restore, so always
+    /// start from the current disk and leave existing snapshot files untouched.
     static var wantsSnapshot: Bool {
-        UserDefaults.standard.object(forKey: "husk.downloadSnapshot") as? Bool ?? true
+        false
     }
 
     /// A machine that has already finished booting, gzipped.
@@ -244,7 +246,7 @@ final class GuestImage: ObservableObject {
             HuskLog.log("guest", "image differs: have "
                       + "\(installedImageDigest?.prefix(12) ?? "nothing"), "
                       + "release has \(m.image.sha256.prefix(12))")
-            offer(.image(bytes: m.image.size + m.snapshot.size), release: m.image.sha256)
+            offer(.image(bytes: m.image.size + (Self.wantsSnapshot ? m.snapshot.size : 0)), release: m.image.sha256)
             return
         }
         if Self.wantsSnapshot,
@@ -559,6 +561,10 @@ final class GuestImage: ObservableObject {
     @Published private(set) var isFetchingSnapshot = false
 
     func downloadSnapshotNow() {
+        guard Self.wantsSnapshot else {
+            HuskLog.log("guest", "pre-booted snapshot download unavailable; preserving current Android disk")
+            return
+        }
         if case .downloading = state { return }
         if hasShippedSnapshot {
             // A valid but older snapshot may be on disk when the manifest
@@ -653,6 +659,11 @@ final class GuestImage: ObservableObject {
     /// Runs after the system image is in place, because the snapshot is only
     /// meaningful alongside the image it was booted from.
     func downloadSnapshot(completion: @escaping (Bool) -> Void) {
+        guard Self.wantsSnapshot else {
+            HuskLog.log("guest", "skipping incompatible pre-booted snapshot; preserving current Android disk")
+            completion(false)
+            return
+        }
         HuskLog.log("guest", "downloading pre-booted snapshot (about 2 GB, "
                            + "\(Self.snapshotPartCount) parts)")
         let expected = manifest?.snapshot.sha256

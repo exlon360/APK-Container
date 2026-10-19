@@ -10,18 +10,20 @@ APK Container is an Android-app-focused fork of [Husk by Leviidev and contributo
 - PS4 library, launch screens, native host code, and build steps are removed.
 - Husk's Android translation engines, ANGLE/MoltenVK rendering, JIT methods, increased-memory-limit entitlement, and extended virtual addressing support are retained.
 
-Supported apps use the native Android translation layer. Apps that need the full Android environment can use the QEMU compatibility runtime, configured under **Settings → Compatibility Runtime**. Its snapshot-compatible display remains the default; device-shaped resolution presets are available separately.
+Supported apps use the native Android translation layer. Apps that need the full Android environment can use the QEMU compatibility runtime, configured under **Settings → Compatibility Runtime**. Its low-resolution display remains the default; device-shaped resolution presets are available separately.
 
-The compatibility image still contains Android's launcher. APK Container removes desktop navigation from its interface and checks the foreground app before showing the runtime surface. That guard polls Android, so the launcher may appear briefly after an app exits. This behavior still needs on-device verification.
+APK Container starts each APK’s own entry activity directly; no Android home launcher or launcher icon cache is required. It checks the foreground app before showing the runtime surface, and waits for Android services to recover if they restart. The compatibility image still contains its original home app, but desktop navigation is removed. The foreground check polls Android, so a brief desktop frame after an app exits remains possible.
+
+GPU runtime snapshots are disabled. Device logs showed the previous post-install snapshot stopping SurfaceFlinger and crashing Android’s display service, which then prevented APK launches. GPU mode now cold-boots the current Android disk; installed APKs and app data remain there. Older local and downloaded RAM snapshots are retained on disk but not restored, and incompatible pre-booted snapshots are no longer downloaded. Software snapshots use a versioned identity captured from the running hardware, so changing resolution settings cannot mislabel an existing session. The first cold boot can take several minutes.
 
 ## Using the app
 
-1. Build a local IPA using the [build guide](docs/BUILD-APK-CONTAINER.md), then import that file into your sideloader.
+1. Download the IPA from [Releases](https://github.com/exlon360/APK-Container/releases), or build it using the [build guide](docs/BUILD-APK-CONTAINER.md), then import it into your sideloader. When updating in LiveContainer, keep the existing app data container.
 2. Open **Settings → JIT & Sideloading** to configure an available JIT method.
 3. Add an APK from **Apps**. For the compatibility runtime, download its Android image through **Runtime Setup** when needed.
 4. Use **Settings → Display & Resolution** for the default rendering quality, or an app's settings for its orientation and resolution override.
 
-The app's identity is `com.apkcontainer.app`, with the `apkcontainer://` URL scheme. It uses a separate app container from upstream Husk under the default identifiers. Existing Husk saves are not automatically migrated. There is no APK Container update feed configured in this checkout; use an IPA built from this source.
+The app's identity is `com.apkcontainer.app`, with the `apkcontainer://` URL scheme. It uses a separate app container from upstream Husk under the default identifiers. Existing Husk saves are not automatically migrated. There is no automatic sideloading update feed configured; install an IPA from this fork’s releases or a local build.
 
 ## Current limits
 

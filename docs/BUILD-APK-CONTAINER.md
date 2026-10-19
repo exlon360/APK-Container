@@ -51,17 +51,21 @@ Verify on an actual iPhone/iPad:
 
 No device performance improvement or universal APK compatibility is established by the build alone.
 
+GPU RAM snapshots are disabled because their compositor shutdown caused a device-observed Android display-service crash after APK installation. GPU boots use current disk contents. Existing local and shipped snapshots are left intact but rejected by the new versioned hardware identity; incompatible shipped snapshots are no longer downloaded. The first cold boot can take several minutes. Software snapshot support remains; snapshot restore can rewind app data to its saved point.
+
 ## Local checks
 
-The display calculation checks run without a connected device:
+These regression checks run without a connected device:
 
 ```sh
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
-    sh tests/display-resolution/run.sh
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+sh tests/display-resolution/run.sh
+sh tests/android-presentation/run.sh
+sh tests/runtime-snapshot/run.sh
 git diff --check
 ```
 
-They cover phone and iPad sizes, rotation, legacy presets, custom limits, pixel-density consistency, and invalid input. They do not exercise the UIKit interface or Android engines. The upstream translation-layer harness remains under `tools/regress/` and requires its own APK fixtures and reference images.
+They cover phone and iPad sizes, rotation, legacy presets, custom limits, pixel-density consistency, direct app entry resolution without a HOME app, service restart recovery, cancellation, and runtime snapshot compatibility. Android command responses are mocked; these checks do not exercise UIKit or Android engines. The upstream translation-layer harness remains under `tools/regress/` and requires its own APK fixtures and reference images.
 
 ## Building the runtime from source
 
@@ -69,4 +73,4 @@ They cover phone and iPad sizes, rotation, legacy presets, custom limits, pixel-
 
 That route is not yet self-contained for Android system and Java assets. `scripts/build_android_system.sh` needs an external Lineage disk image and `debugfs`; `scripts/build_java_runtime.sh` needs an extracted Android APEX tree, platform resources, and an HTTP legacy JAR. Its upstream defaults contain developer-specific paths, which must be replaced with real inputs using the script arguments and `HTTP_LEGACY`, `FRAMEWORK_RES`, `HUSK_JDK`, and `HUSK_D8`. Missing assets can leave Flutter without fonts or Java apps unable to start even when native compilation succeeds.
 
-Preserve the upstream attribution, [license](../LICENSE), and third-party notices when distributing builds. This checkout has no configured APK Container hosted release or sideloading update feed.
+Preserve the upstream attribution, [license](../LICENSE), and third-party notices when distributing builds. Preview IPAs are published in [APK Container releases](https://github.com/exlon360/APK-Container/releases). No automatic sideloading update feed is configured.
