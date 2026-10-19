@@ -164,11 +164,18 @@ enum AndroidAppOnlyPolicy {
     }
 
     static func enabledState(_ output: String) -> Int? {
-        let users = output.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { $0.hasPrefix("User 0:") }
-        guard users.count == 1,
-              let state = capture(#"(?:^|\s)enabled=([0-4])(?:\s|$)"#, in: users[0]) else { return nil }
-        return Int(state)
+        // dumpsys also prints bare User 0: headings for shared-user permissions.
+        // They are not package-state rows. Ignore only those empty headings;
+        // multiple or malformed nonempty rows must still block a state change.
+        let users = output.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.hasPrefix("User 0:") && $0 != "User 0:" }
+        guard users.count == 1 else { return nil }
+        let fields = users[0].split(whereSeparator: { $0.isWhitespace })
+            .filter { $0.hasPrefix("enabled=") }
+        guard fields.count == 1 else { return nil }
+        let value = fields[0].dropFirst("enabled=".count)
+        guard value.count == 1, let state = Int(value), (0...4).contains(state) else { return nil }
+        return state
     }
 
     static func chromeIsDisabled(_ output: String) -> Bool {

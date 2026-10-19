@@ -13,6 +13,13 @@ enum AndroidAppOnlyPolicyTests {
         "  User \(user): ceDataInode=234 installed=true hidden=false suspended=false stopped=false enabled=\(enabled) instant=false"
     }
 
+    // Exact package-state payload reported by the user; the second User 0:
+    // comes from a separate shared-user permission section in dumpsys package.
+    static let reportedDeviceLockState = """
+    User 0: ceDatalnode=426469 deDatalnode=33254 installed=true hidden=false suspended=false distractionFlags=0 stopped=false notLaunched=false enabled=2 instant=false virtual=false quarantined=false
+    User 0:
+    """
+
     static func chrome(mask1: UInt32 = 0, mask2: UInt32 = 0, user: Int = 0,
                        shell1: UInt32? = nil, shell2: UInt32 = 0) -> String {
         var result = "  displayId=0\n    mDisabled1=0x\(String(mask1, radix: 16))\n    mDisabled2=0x\(String(mask2, radix: 16))\n  mCurrentUserId=\(user)\n"
@@ -147,6 +154,19 @@ enum AndroidAppOnlyPolicyTests {
         precondition(P.enabledState(state(1) + "\n" + state(0)) == nil)
         precondition(P.enabledState(state(5)) == nil)
         precondition(P.enabledState("enabled=1") == nil)
+        precondition(P.enabledState(reportedDeviceLockState) == 2)
+        for enabled in 0...4 {
+            let withHeadings = "  User 0:  \r\n" + state(enabled) + "\r\n\tUser 0:\t\r\n"
+            precondition(P.enabledState(withHeadings) == enabled)
+        }
+        for invalid in ["User 0:", "User 0:\n  User 0:",
+                        state(2) + "\nUser 0: installed=true",
+                        state(2) + "\n" + state(2),
+                        state(2) + " enabled=3", state(2) + " enabled=invalid",
+                        "User 0: enabled=20", "User 0: enabled=", "User 0: enabled=invalid",
+                        "User 0: enabled=+2", "User 0: enabled=02"] {
+            precondition(P.enabledState(invalid) == nil, "Ambiguous or malformed state accepted: \(invalid)")
+        }
 
         // Never take another display's aggregate flags or a transient app's flags as our policy.
         precondition(P.chromeIsDisabled(applied))
@@ -180,9 +200,9 @@ enum AndroidAppOnlyPolicyTests {
         for original in [0, 1] {
             let mock = Mock([Step(P.allHomesCommand, home + "\n" + fallback),
                              Step(P.enabledHomesCommand, home + "\n" + fallback),
-                             Step(P.packageStateCommand(launcher), state(original)),
+                             Step(P.packageStateCommand(launcher), state(original) + "\nUser 0:"),
                              Step(P.disableCommand(launcher), "Package \(launcher) new state: disabled-user"),
-                             Step(P.packageStateCommand(launcher), state(3)),
+                             Step(P.packageStateCommand(launcher), state(3) + "\nUser 0:"),
                              Step(P.enabledHomesCommand, fallback)] + chromeSteps())
             let report = try mock.prepare()
             precondition(mock.journal[launcher] == original)
@@ -191,6 +211,32 @@ enum AndroidAppOnlyPolicyTests {
             precondition(!mock.commands.contains(where: { $0.contains("disable-user") && $0.contains("com.android.settings") }))
             mock.finished()
         }
+
+        // The reported DeviceLock HOME component is already disabled. Its extra
+        // permission heading must not block preparing a normal APK or mutate that package.
+        let deviceLock = "com.android.devicelockcontroller"
+        let deviceLockHome = deviceLock + "/.activities.LockedHomeActivity"
+        let withDeviceLock = Mock([
+            Step(P.allHomesCommand, deviceLockHome + "\n" + home + "\n" + fallback),
+            Step(P.enabledHomesCommand, home + "\n" + fallback),
+            Step(P.packageStateCommand(deviceLock), reportedDeviceLockState),
+            Step(P.packageStateCommand(launcher), state(0) + "\nUser 0:"),
+            Step(P.disableCommand(launcher), "Package \(launcher) new state: disabled-user"),
+            Step(P.packageStateCommand(launcher), state(3) + "\nUser 0:"),
+            Step(P.enabledHomesCommand, fallback)] + chromeSteps())
+        let deviceLockReport = try withDeviceLock.prepare()
+        precondition(deviceLockReport.disabledPackages == [deviceLock, launcher])
+        precondition(deviceLockReport.chromeDisabledVerified)
+        precondition(withDeviceLock.journal == [launcher: 0])
+        precondition(!withDeviceLock.commands.contains(P.disableCommand(deviceLock)))
+        withDeviceLock.finished()
+
+        // A real conflicting state still blocks before any package or chrome mutation.
+        let conflictingState = Mock([
+            Step(P.allHomesCommand, home), Step(P.enabledHomesCommand, home),
+            Step(P.packageStateCommand(launcher), state(0) + "\nUser 0:\n" + state(3))])
+        expectFailure(conflictingState, contains: "could not read the original state")
+        precondition(conflictingState.journal.isEmpty && conflictingState.chromeSnapshots.isEmpty)
 
         // The persisted disabled package remains in MATCH_DISABLED_COMPONENTS inventory, but a
         // repeat run must not replace its pre-policy original setting with disabled-user.
