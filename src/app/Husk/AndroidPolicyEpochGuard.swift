@@ -5,11 +5,29 @@ import Foundation
 /// changes, including a restart that completes between otherwise successful focus polls.
 /// One guard belongs to one serial presentation task, never shared between requests.
 final class AndroidPolicyEpochGuard {
-    static let epochCommand = "pidof system_server"
+    // The guest's init-spawned shell does not necessarily inherit adbd's readproc
+    // group. pidof can therefore report nothing while system_server is healthy.
+    // Binder DEBUG_PID_TRANSACTION asks the window service for its own PID and
+    // needs neither /proc access nor a full service dump.
+    static let epochCommand = "dumpsys --pid window"
     static let beginMarker = "APK_SYSTEM_SERVER_BEGIN="
     static let endMarker = "APK_SYSTEM_SERVER_END="
-    static let focusCommand = "printf '\(beginMarker)'; \(epochCommand); dumpsys window displays; "
-        + "printf '\(endMarker)'; \(epochCommand)"
+    static let focusCommand = epochRead(variable: "apk_policy_before", marker: beginMarker)
+        + "dumpsys window displays; apk_policy_display_status=$?; "
+        + epochRead(variable: "apk_policy_after", marker: endMarker)
+        + "[ \"$apk_policy_before_status\" -eq 0 ] && "
+        + "[ \"$apk_policy_display_status\" -eq 0 ] && "
+        + "[ \"$apk_policy_after_status\" -eq 0 ]"
+
+    /// Keep each marker on its own line even when a service omits a trailing
+    /// newline, and retain failure from every command, not just the last one.
+    /// Reject diagnostic/multiline output instead of treating its first PID as
+    /// authority. A failed observation remains covered and can be retried.
+    private static func epochRead(variable: String, marker: String) -> String {
+        "\(variable)=$(\(epochCommand) 2>&1); \(variable)_status=$?; "
+            + "case \"$\(variable)\" in ''|*[!0-9]*) \(variable)=; \(variable)_status=1;; esac; "
+            + "printf '\\n\(marker)%s\\n' \"$\(variable)\"; "
+    }
 
     private(set) var preparedEpoch: Int?
     private(set) var needsPreparation = false

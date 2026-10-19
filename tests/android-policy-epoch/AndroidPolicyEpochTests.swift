@@ -43,7 +43,84 @@ import Foundation
         }
     }
 
+    /// Execute the production shell text with restricted-guest service fixtures.
+    /// This catches shell status/newline bugs that mocked final strings cannot.
+    static func shell(_ command: String, before: String = "733", after: String = "733",
+                      beforeStatus: Int = 0, afterStatus: Int = 0,
+                      displayStatus: Int = 0) throws -> AP.CommandResult {
+        func quote(_ value: String) -> String {
+            "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        }
+        let fixture = """
+        apk_fixture_phase=before
+        pidof() { return 1; }
+        dumpsys() {
+            if [ "$1" = "--pid" ] && [ "$2" = "window" ]; then
+                if [ "$apk_fixture_phase" = "after" ]; then
+                    printf '%s' \(quote(after)); return \(afterStatus)
+                fi
+                printf '%s' \(quote(before)); return \(beforeStatus)
+            fi
+            if [ "$1" = "window" ] && [ "$2" = "displays" ]; then
+                apk_fixture_phase=after
+                printf '%s' 'WINDOW MANAGER DISPLAY CONTENTS'
+                return \(displayStatus)
+            fi
+            return 99
+        }
+        \(command)
+        """
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", fixture]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        try process.run()
+        let output = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return (String(decoding: output, as: UTF8.self), Int(process.terminationStatus))
+    }
+
+    static func restrictedShellChecks() throws {
+        let procLookup = try shell("pidof system_server")
+        precondition(procLookup.status == 1 && procLookup.out.isEmpty)
+        let binderLookup = try shell(Guard.epochCommand)
+        precondition(binderLookup.status == 0 && Guard.epoch(binderLookup.out) == 733,
+                     "A healthy Binder service must work when /proc enumeration is unavailable")
+        let prepared = Guard()
+        _ = try prepared.prepare(readEpoch: {
+            let result = try shell(Guard.epochCommand)
+            return result.status == 0 ? Guard.epoch(result.out) : nil
+        }, apply: {})
+        let observed = try shell(Guard.focusCommand)
+        precondition(observed.status == 0 && prepared.accepts(observed.out),
+                     "Service output without final newlines must not merge epoch markers")
+        for result in [try shell(Guard.focusCommand, beforeStatus: 1),
+                       try shell(Guard.focusCommand, afterStatus: 1),
+                       try shell(Guard.focusCommand, displayStatus: 1)] {
+            precondition(result.status != 0, "Every subcommand failure must survive the final PID read")
+        }
+        for value in ["", "733\nservice warning", "Can't find service: window", "733 744"] {
+            let bad = try shell(Guard.focusCommand, before: value)
+            precondition(bad.status != 0 && Guard.epochInFocusReport(bad.out) == nil,
+                         "Diagnostics or partial PID output must not authorize the display")
+        }
+        let restart = try shell(Guard.focusCommand, after: "744")
+        precondition(restart.status == 0 && Guard.epochInFocusReport(restart.out) == nil)
+        let unavailable = Guard()
+        var mutations = 0
+        do {
+            _ = try unavailable.prepare(readEpoch: { nil }, apply: { mutations += 1 })
+            preconditionFailure("Missing Binder PID should request startup recovery")
+        } catch Guard.Failure.unavailable {}
+        precondition(mutations == 0 && unavailable.preparedEpoch == nil && unavailable.needsPreparation)
+        _ = try unavailable.prepare(readEpoch: { 733 }, apply: { mutations += 1 })
+        precondition(mutations == 1 && unavailable.accepts(observed.out))
+    }
+
     static func main() async throws {
+        try restrictedShellChecks()
         precondition(Guard.epoch("123\n") == 123)
         for invalid in ["", "0", "-1", "12 34", "unavailable", "12junk"] {
             precondition(Guard.epoch(invalid) == nil)
@@ -128,6 +205,6 @@ import Foundation
         do { _ = try cancelProbe.observe(run: failBridge.run); preconditionFailure("Expected cancellation") }
         catch is CancellationError {}
         precondition(failBridge.commands.count == 1)
-        print("Android policy epoch tests passed: stable startup, restart between polls, cover-before-restore, fresh display/owner checks, failure and cancellation.")
+        print("Android policy epoch tests passed: restricted-proc Binder lookup, shell status/newline validation, stable startup, restart between polls, cover-before-restore, fresh display/owner checks, failure and cancellation.")
     }
 }

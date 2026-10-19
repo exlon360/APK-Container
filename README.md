@@ -19,6 +19,8 @@ The runtime verifies the focused window’s owner on Android’s default display
 
 GPU runtime snapshots are disabled. Device logs showed the previous post-install snapshot stopping SurfaceFlinger and crashing Android’s display service, which then prevented APK launches. GPU mode now cold-boots the current Android disk; installed APKs and app data remain there. Older local and downloaded RAM snapshots are retained on disk but not restored, and incompatible pre-booted snapshots are no longer downloaded. Software snapshots use a versioned identity captured from the running hardware, so changing resolution settings cannot mislabel an existing session. The first cold boot can take several minutes.
 
+The app-only launch gate reads Android's window-service process identity through Binder (`dumpsys --pid window`). It does not require process-list access, which the guest shell can lack even while Android is running. Temporary service restarts and bridge failures retry before opening the APK; unverified app-only restrictions still keep the Android surface covered.
+
 ## Using the app
 
 1. Download the IPA from [Releases](https://github.com/exlon360/APK-Container/releases), or build it using the [build guide](docs/BUILD-APK-CONTAINER.md), then import it into your sideloader. When updating in LiveContainer, keep the existing app data container.

@@ -75,6 +75,8 @@ git diff --check
 
 They cover phone and iPad sizes, rotation, legacy presets, custom limits, pixel-density consistency and readback, cropped/aspect-fit input mapping, direct app entry resolution without a HOME app, durable policy restoration records, cached focus ownership, retained sessions during transient and sustained Home, verified policy recovery after a framework restart, cancellation, guest keyboard routing, and runtime snapshot compatibility. The system-bar suite also renders Metal textures and compares pixels with the touch transform. Android command responses are mocked; these checks do not exercise UIKit or Android engines. The upstream translation-layer harness remains under `tools/regress/` and requires its own APK fixtures and reference images.
 
+The policy-epoch tests execute the production shell command against controlled shell fixtures, including a working window service when `pidof system_server` returns exit 1. The epoch comes from `dumpsys --pid window`, using Binder rather than `/proc`. Both sides of the focus dump must agree with the prepared epoch; a restart keeps the surface covered until the restrictions are restored. Startup retries transient epoch/bridge failures but reports failed journal persistence or policy verification.
+
 Before changing guest launcher or status-bar policy, the runtime writes and reads back a private restore journal under its application-support `app-only-restore` directory, keyed to the guest disk. It retains original package states and explicit restoration commands. It never automatically restores older state or deletes installed app data. Keep that journal with a complete device backup when replacing or moving the app container.
 
 ## Building the runtime from source

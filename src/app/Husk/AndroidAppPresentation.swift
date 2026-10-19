@@ -17,7 +17,7 @@ enum AndroidAppPresentation {
         var errorDescription: String? { if case .message(let text) = self { return text }; return nil }
     }
 
-    private struct IncompleteResponse: LocalizedError {
+    struct IncompleteResponse: LocalizedError {
         var errorDescription: String? { "Android returned an incomplete command response." }
     }
 

@@ -361,6 +361,34 @@ struct AndroidAppPresentationTests {
         } catch { precondition(error.localizedDescription == "Restore checkpoint failed") }
         failedPolicy.finished()
 
+        // Temporary policy preparation failures retry before resolving/launching the APK.
+        // This covers the real-device failure at the system-server identity gate, a restart
+        // during policy setup, and a missing bridge response marker.
+        for failure: Error in [AndroidPolicyEpochGuard.Failure.unavailable,
+                               AndroidPolicyEpochGuard.Failure.restarted,
+                               AP.IncompleteResponse(), NSError(domain: "bridge", code: 1)] {
+            let recoveringPolicy = MockBridge([
+                Step(AP.readinessCommand, ready), Step(AP.homeCommand, noHome),
+                Step(AP.readinessCommand, ready), Step(AP.homeCommand, noHome),
+                Step(resolve(), main), Step(launch(), "Status: ok")])
+            var attempts = 0
+            _ = try await recoveringPolicy.start(prepare: { session in
+                attempts += 1
+                if attempts == 1 { throw failure }
+                precondition(!recoveringPolicy.commands.contains { $0.hasPrefix("am start") })
+                return session
+            })
+            precondition(attempts == 2 && recoveringPolicy.pauses == 1)
+            precondition(recoveringPolicy.commands.filter { $0.hasPrefix("am start") }.count == 1)
+            recoveringPolicy.finished()
+        }
+        let cancelledPolicy = MockBridge([Step(AP.readinessCommand, ready), Step(AP.homeCommand, noHome)])
+        do {
+            _ = try await cancelledPolicy.start(prepare: { _ in throw CancellationError() })
+            preconditionFailure("Cancelled policy preparation must not retry or launch")
+        } catch is CancellationError {}
+        precondition(cancelledPolicy.pauses == 0); cancelledPolicy.finished()
+
         // Failed/unsupported HOME enumeration does not block the requested APK or expose another app.
         for step in [Step(AP.homeCommand, "Can't find service: package", status: 20),
                      Step(AP.homeCommand, "", fail: true), Step(AP.homeCommand, "", missingMarker: true),

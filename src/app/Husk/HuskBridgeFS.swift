@@ -1844,7 +1844,13 @@ final class AndroidHost: ObservableObject {
                             let report = try applyPolicy()
                             return .init(homePackages: prior.homePackages.union(report.homePackages), homesVerified: true)
                         } catch is CancellationError { throw CancellationError() }
+                        // A service restart or lost bridge response is recoverable by start's
+                        // bounded retry loop. Do not turn these into permanent launch failures.
+                        catch let error as AndroidPolicyEpochGuard.Failure { throw error }
+                        catch let error as BridgeError { throw error }
+                        catch let error as AndroidAppPresentation.IncompleteResponse { throw error }
                         catch {
+                            // Failed policy verification and restore-journal writes still block launch.
                             throw AndroidAppPresentation.LaunchError.message("App-only setup could not finish: \(error.localizedDescription)")
                         }
                     })
