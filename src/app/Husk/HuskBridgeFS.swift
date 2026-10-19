@@ -1855,7 +1855,7 @@ final class AndroidHost: ObservableObject {
                     AndroidSystemBars.shared.reset()
                     _ = try applyPolicy()
                     HuskLog.log("app-only", "Restored controls after Android system service restarted.")
-                })
+                }, displayRecoveryHint: { AndroidSystemBars.shared.waitingReason })
                 try await AndroidAppPresentation.monitor(
                     requested: pkg, session: session, installedPackages: installed,
                     allowSettings: settings,
@@ -1888,6 +1888,7 @@ final class AndroidHost: ObservableObject {
                                 // or a missed probe; the UI covers the surface immediately.
                                 self.foregroundPackage = observation.package
                                 self.appSurfaceAllowed = false
+                                if let hint = observation.recoveryHint { self.presentationRecovery = hint }
                                 let evidence = "covered: " + observation.diagnostic
                                 if self.lastPresentationDiagnostic != evidence {
                                     self.lastPresentationDiagnostic = evidence
@@ -1900,7 +1901,8 @@ final class AndroidHost: ObservableObject {
                             case .unavailable(let observation):
                                 HuskLog.log("focus", "Waiting for APK recovery: \(observation.diagnostic)")
                                 if self.busy == "Opening…" { self.busy = nil }
-                                self.presentationRecovery = "Android is still recovering this app. You can wait or try opening it again."
+                                self.presentationRecovery = observation.recoveryHint
+                                    ?? "Android is still recovering this app. You can wait or try opening it again."
                             }
                         }
                     })

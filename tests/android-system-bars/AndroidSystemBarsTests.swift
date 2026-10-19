@@ -8,10 +8,13 @@ enum AndroidSystemBarsTests {
         typealias Crop = RuntimeDisplayGeometry.Crop
         func dump(w: Int = 1280, h: Int = 960, rotation: Int = 0,
                   status: String = "[0,0][1280,24]", navigation: String = "[0,912][1280,960]",
-                  visible: Bool = true) -> String {
-            """
+                  visible: Bool = true, physicalWidth: Int? = nil, physicalHeight: Int? = nil) -> String {
+            let pw = physicalWidth ?? (rotation % 2 == 0 ? w : h)
+            let ph = physicalHeight ?? (rotation % 2 == 0 ? h : w)
+            return """
             WINDOW MANAGER DISPLAY CONTENTS (dumpsys window displays)
               Display: mDisplayId=0 (organized)
+                init=\(pw)x\(ph) 160dpi mMinSizeOfResizeableTaskDp=220 base=\(w)x\(h) 160dpi cur=\(w)x\(h) app=\(w)x\(h) rng=0x0-0x0
               DisplayFrames w=\(w) h=\(h) r=\(rotation)
               WindowInsetsStateController
                 InsetsState
@@ -58,6 +61,16 @@ enum AndroidSystemBarsTests {
         near(sideBar.content.right, 1232.0 / 1280)
         let leftBar = Bars.parse(dump(navigation: "[0,0][48,960]"))!
         near(leftBar.content.left, 48.0 / 1280)
+        let scaled = dump(w: 640, h: 480, status: "[0,0][640,12]", navigation: "[0,456][640,480]",
+                          physicalWidth: 1280, physicalHeight: 960)
+        precondition(Bars.parse(scaled) == parsed, "Same-aspect logical rendering overrides retain physical scanout mapping")
+        let scaledRotation = Bars.parse(dump(w: 480, h: 640, rotation: 1, status: "[0,0][480,16]",
+            navigation: "[0,608][480,640]", physicalWidth: 1280, physicalHeight: 960))!
+        near(scaledRotation.content.left, 0.05); near(scaledRotation.content.right, 0.975)
+        precondition(scaledRotation.physicalWidth == 1280 && scaledRotation.physicalHeight == 960)
+        let wrongAspect = dump(w: 640, h: 480, status: "[0,0][640,12]", navigation: "[0,456][640,480]",
+                               physicalWidth: 1920, physicalHeight: 1080)
+        let noScale = sample.replacingOccurrences(of: " base=", with: " noscale base=")
         for invalid in [
             "", sample.replacingOccurrences(of: "DisplayFrames w=1280 h=960 r=0", with: "DisplayFrames w=1280 h=960 r=9"),
             String(sample.prefix(while: { $0 != "C" })),
@@ -69,11 +82,20 @@ enum AndroidSystemBarsTests {
             sample.replacingOccurrences(of: "visible=true", with: "visible=maybe"),
             sample.replacingOccurrences(of: "Display: mDisplayId=2", with: "Display: mDisplayId=0"),
             sample.replacingOccurrences(of: "type=statusBars", with: "type=unknown").replacingOccurrences(of: "type=navigationBars", with: "type=unknown"),
+            sample.replacingOccurrences(of: "init=1280x960", with: "init=0x960"),
+            sample.replacingOccurrences(of: "cur=1280x960", with: "cur=640x480"),
+            sample.replacingOccurrences(of: "init=", with: "missingPhysical="),
+            wrongAspect, noScale,
         ] { precondition(Bars.parse(invalid) == nil, "Malformed/missing geometry must stay covered") }
 
         let state = Bars()
         precondition(state.crop(width: 1280, height: 960) == nil)
+        precondition(!state.update(fromDisplayDump: sample), "Do not expose a session before any renderer has a frame")
+        precondition(state.waitingReason?.contains("first display frame") == true)
+        precondition(state.crop(width: 1280, height: 960) == nil)
+        state.reportScanout(width: 1280, height: 960)
         precondition(state.update(fromDisplayDump: sample))
+        precondition(state.waitingReason == nil)
         precondition(state.crop(width: 1280, height: 960) == parsed.content)
         precondition(state.crop(width: 800, height: 600) == nil)
         precondition(!state.update(fromDisplayDump: "bridge failed"))
@@ -81,6 +103,19 @@ enum AndroidSystemBarsTests {
         _ = state.update(fromDisplayDump: sample)
         state.reset()
         precondition(state.crop(width: 1280, height: 960) == nil)
+        precondition(state.update(fromDisplayDump: scaled), "Per-app reset retains known scanout dimensions")
+        state.reportScanout(width: 640, height: 480)
+        precondition(state.crop(width: 1280, height: 960) == nil, "Old frame input must stop when the scanout changes")
+        precondition(!state.update(fromDisplayDump: scaled))
+        precondition(state.waitingReason?.contains("runtime is drawing 640 × 480") == true)
+        precondition(state.update(fromDisplayDump: dump(w: 640, h: 480, status: "[0,0][640,12]",
+                                                        navigation: "[0,456][640,480]")))
+        state.reportScanout(width: 0, height: 0)
+        precondition(!state.update(fromDisplayDump: sample))
+        precondition(!state.update(fromDisplayDump: wrongAspect))
+        precondition(state.waitingReason?.contains("different aspect ratio") == true)
+        precondition(!state.update(fromDisplayDump: noScale))
+        precondition(state.waitingReason?.contains("disables scaling") == true)
 
         let geometry = RuntimeDisplayGeometry(width: 1280, height: 960, rotated: false, crop: parsed.content)
         near(geometry.contentHeight, 888)

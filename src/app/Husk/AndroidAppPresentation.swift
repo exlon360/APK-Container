@@ -70,6 +70,8 @@ enum AndroidAppPresentation {
         let state: FocusState
         /// Bounded raw evidence for the diagnostic log, never a user-facing error message.
         let diagnostic: String
+        /// A native recovery explanation supplied by a validated host display check.
+        var recoveryHint: String? = nil
         var package: String? {
             if case .window(let package, _) = state { return package }
             return nil
@@ -182,14 +184,17 @@ enum AndroidAppPresentation {
         private var windowID: String?
         private var ownershipReport: String?
         private let validateDisplay: ((String) -> Bool)?
+        private let displayRecoveryHint: (() -> String?)?
         private let policyEpoch: AndroidPolicyEpochGuard?
         private let restorePolicy: (() throws -> Void)?
 
         init(validateDisplay: ((String) -> Bool)? = nil,
-             policyEpoch: AndroidPolicyEpochGuard? = nil, restorePolicy: (() throws -> Void)? = nil) {
+             policyEpoch: AndroidPolicyEpochGuard? = nil, restorePolicy: (() throws -> Void)? = nil,
+             displayRecoveryHint: (() -> String?)? = nil) {
             self.validateDisplay = validateDisplay
             self.policyEpoch = policyEpoch
             self.restorePolicy = restorePolicy
+            self.displayRecoveryHint = displayRecoveryHint
         }
 
         private func clear() { windowID = nil; ownershipReport = nil }
@@ -217,7 +222,9 @@ enum AndroidAppPresentation {
                 }
                 if let validateDisplay, !validateDisplay(focus.out) {
                     clear()
-                    return Observation(state: .unrecognized, diagnostic: "Waiting for valid Android display bounds and system-bar insets.")
+                    return Observation(state: .unrecognized,
+                        diagnostic: "Waiting for valid Android display bounds and system-bar insets.",
+                        recoveryHint: displayRecoveryHint?())
                 }
                 guard let id = focusedWindowID(focus.out) else {
                     clear()

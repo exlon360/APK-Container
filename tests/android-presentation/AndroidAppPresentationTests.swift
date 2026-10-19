@@ -166,7 +166,8 @@ struct AndroidAppPresentationTests {
 
         // Insets must be verified on every dump, including an otherwise cached window owner.
         var validDisplay = true
-        let validated = AP.Probe(validateDisplay: { _ in validDisplay })
+        let validated = AP.Probe(validateDisplay: { _ in validDisplay },
+                                 displayRecoveryHint: { "Waiting for the resized Android display." })
         let displayBridge = MockBridge([
             Step(AP.focusCommand, appReport.focus), Step(AP.ownershipCommand, appReport.owners),
             Step(AP.focusCommand, appReport.focus),
@@ -177,6 +178,7 @@ struct AndroidAppPresentationTests {
         validDisplay = false
         let invalidDisplay = try validated.observe(run: displayBridge.run)
         precondition(invalidDisplay.state == .unrecognized)
+        precondition(invalidDisplay.recoveryHint == "Waiting for the resized Android display.")
         validDisplay = true
         let recoveredDisplay = try validated.observe(run: displayBridge.run)
         precondition(recoveredDisplay.package == pkg)

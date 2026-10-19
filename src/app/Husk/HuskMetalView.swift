@@ -107,6 +107,7 @@ extension HuskMetalView: MTKViewDelegate {
         // contend with the emulator for nothing.
         var info = HuskFrameInfo()
         guard husk_display_lock_frame(&info) else { return }
+        AndroidSystemBars.shared.reportScanout(width: Int(info.width), height: Int(info.height))
 
         if info.generation != textureGeneration || texture == nil {
             let desc = MTLTextureDescriptor.texture2DDescriptor(

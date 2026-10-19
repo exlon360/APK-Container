@@ -8,25 +8,55 @@ final class AndroidSystemBars {
     nonisolated(unsafe) static let shared = AndroidSystemBars()
     private let lock = NSLock()
     private var observation: Observation?
+    private var scanout: (width: Int, height: Int)?
+    private var parseFailure = "Waiting for Android display bounds and system-bar insets."
+
+    var waitingReason: String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return waitingReasonLocked
+    }
+
+    private var waitingReasonLocked: String? {
+        guard let observation else { return parseFailure }
+        guard let scanout else { return "Waiting for the runtime's first display frame." }
+        guard observation.crop(width: scanout.width, height: scanout.height) != nil else {
+            return "Android reports a \(observation.physicalWidth) × \(observation.physicalHeight) display, but the runtime is drawing \(scanout.width) × \(scanout.height). Waiting for matching display bounds."
+        }
+        return nil
+    }
+
+    /// Called by either renderer before crop lookup, including while covered.
+    /// Keep this across app-session resets: a static frame need not be reissued
+    /// just because the user opens a different APK.
+    func reportScanout(width: Int, height: Int) {
+        lock.lock()
+        scanout = width > 0 && height > 0 ? (width, height) : nil
+        lock.unlock()
+    }
 
     @discardableResult
     func update(fromDisplayDump dump: String) -> Bool {
-        let parsed = Self.parse(dump)
+        var failure = "Waiting for Android display bounds and system-bar insets."
+        let parsed = Self.parse(dump, failure: &failure)
         lock.lock()
+        defer { lock.unlock() }
         observation = parsed
-        lock.unlock()
-        return parsed != nil
+        parseFailure = failure
+        return waitingReasonLocked == nil
     }
 
     func reset() {
         lock.lock()
         observation = nil
+        parseFailure = "Waiting for Android display bounds and system-bar insets."
         lock.unlock()
     }
 
     func crop(width: Int, height: Int) -> RuntimeDisplayGeometry.Crop? {
         lock.lock()
         defer { lock.unlock() }
+        guard let scanout, scanout.width == width, scanout.height == height else { return nil }
         return observation?.crop(width: width, height: height)
     }
 
@@ -45,8 +75,14 @@ final class AndroidSystemBars {
     /// Stop before Control map, whose provider copies may have stale visibility.
     /// RotationUtils defines the logical-to-physical transform used below.
     static func parse(_ dump: String) -> Observation? {
+        var failure = ""
+        return parse(dump, failure: &failure)
+    }
+
+    private static func parse(_ dump: String, failure: inout String) -> Observation? {
         var inDefaultDisplay = false
         var displayCount = 0
+        var sizes: [Int]?
         var frames: [Int]?
         var controller = false
         var state = false
@@ -66,6 +102,17 @@ final class AndroidSystemBars {
                 continue
             }
             guard inDefaultDisplay else { continue }
+            if line.hasPrefix("init=") {
+                guard !line.contains("noscale") else {
+                    failure = "Android's saved display override disables scaling. Its display bounds cannot be matched safely."
+                    return nil
+                }
+                guard sizes == nil,
+                      let values = captures(#"^init=(\d+)x(\d+)\s.*\bcur=(\d+)x(\d+)(?:\s|$)"#, line),
+                      values.count == 4 else { return nil }
+                sizes = values.compactMap(Int.init)
+                continue
+            }
             if line.hasPrefix("DisplayFrames ") {
                 guard frames == nil,
                       let values = captures(#"^DisplayFrames w=(\d+) h=(\d+) r=([0-3])$"#, line),
@@ -105,10 +152,22 @@ final class AndroidSystemBars {
             }
         }
         guard displayCount == 1, finished, barSourceCount > 0,
+              let sizes, sizes.count == 4,
               let frames, frames.count == 3, let displayFrame, displayFrame.count == 4 else { return nil }
         let w = frames[0], h = frames[1], rotation = frames[2]
         guard w > 0, h > 0, w <= 16384, h <= 16384,
+              sizes.allSatisfy({ $0 > 0 && $0 <= 16384 }),
+              sizes[2] == w, sizes[3] == h,
               displayFrame == [0, 0, w, h] else { return nil }
+        let naturalWidth = rotation % 2 == 0 ? w : h
+        let naturalHeight = rotation % 2 == 0 ? h : w
+        // wm size changes logical rendering, not the physical QEMU scanout.
+        // Equal aspect ratios need only normalized scaling. Different ratios
+        // add a projection/letterbox offset that this dump does not describe.
+        guard naturalWidth * sizes[1] == naturalHeight * sizes[0] else {
+            failure = "Android's saved display override has a different aspect ratio from the runtime display. Its display bounds cannot be matched safely."
+            return nil
+        }
         var left = 0, top = 0, right = w, bottom = h
         for bar in bars {
             let l = bar[0], t = bar[1], r = bar[2], b = bar[3]
@@ -136,8 +195,7 @@ final class AndroidSystemBars {
         default: physical = logical
         }
         guard physical.isValid else { return nil }
-        return Observation(physicalWidth: rotation % 2 == 0 ? w : h,
-                           physicalHeight: rotation % 2 == 0 ? h : w, content: physical)
+        return Observation(physicalWidth: sizes[0], physicalHeight: sizes[1], content: physical)
     }
 
     private static func captures(_ pattern: String, _ input: String) -> [String]? {

@@ -141,6 +141,7 @@ final class HuskMetalPresenter {
 
     /// Called from QEMU's thread, once per guest frame.
     func present(texture: MTLTexture, flip: Bool) {
+        AndroidSystemBars.shared.reportScanout(width: texture.width, height: texture.height)
         lock.lock()
         defer { lock.unlock() }
 
