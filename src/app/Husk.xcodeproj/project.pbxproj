@@ -16,6 +16,7 @@
 		0571BFDC9E02848C62133B4E /* husk-tl-dvm.c in Sources */ = {isa = PBXBuildFile; fileRef = 642A69428A8151E1B1F75CBB /* husk-tl-dvm.c */; };
 		057DC4AF3D4EBA982E4C3FF8 /* husk-tl-scan.c in Sources */ = {isa = PBXBuildFile; fileRef = 4385A14B11CBA1C3502D433D /* husk-tl-scan.c */; };
 		05F9351F3F903D4B204F57EF /* GuestKeyboardInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10E7010C8B87760E615CE3D6 /* GuestKeyboardInput.swift */; };
+		06F6D0A4C76DA9F6998DB580 /* BuildBridgeConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A16B95C5A037095AB96EEC3 /* BuildBridgeConnection.swift */; };
 		08FD8CEA2066A8C013B2DF8B /* husk-tl-unity-app.c in Sources */ = {isa = PBXBuildFile; fileRef = BCA22CD85A237E860D437698 /* husk-tl-unity-app.c */; };
 		090A2A3F43CE69EA3C079EB0 /* HuskLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6541CC4432CA2CE74901320 /* HuskLog.swift */; };
 		0B197878C829D66E77FD7E3F /* libANGLE-shared.dylib in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 3B1406C4A7D0F7E50BCB365B /* libANGLE-shared.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
@@ -405,6 +406,7 @@
 		85D8F83C8952092997CE071C /* husk-tl-jni-security.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-jni-security.c"; sourceTree = "<group>"; };
 		86A6E743652A606829BC044B /* husk-tl-prefs.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-prefs.c"; sourceTree = "<group>"; };
 		893986FED6A489EB5F1CB56A /* husk-tl-sound.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "husk-tl-sound.h"; sourceTree = "<group>"; };
+		8A16B95C5A037095AB96EEC3 /* BuildBridgeConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuildBridgeConnection.swift; sourceTree = "<group>"; };
 		8BC5444F3736405047716F02 /* BuildBridgeModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuildBridgeModels.swift; sourceTree = "<group>"; };
 		8BE75C276770496B7712F36A /* husk-tl-dvm-jvm.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-dvm-jvm.c"; sourceTree = "<group>"; };
 		900EFFFFB083CADE3666D0A4 /* husk-tl-dvm-gles11ext.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-dvm-gles11ext.c"; sourceTree = "<group>"; };
@@ -557,6 +559,7 @@
 				28D3E1CEE343707BE986FA6E /* Assets.xcassets */,
 				6F40192B3EDAD27D2CBFFC2F /* BootScreen.swift */,
 				043043C8BC84231B70198592 /* BuildBridge.swift */,
+				8A16B95C5A037095AB96EEC3 /* BuildBridgeConnection.swift */,
 				8BC5444F3736405047716F02 /* BuildBridgeModels.swift */,
 				5B01E2AF386C0B659FC7C097 /* BuildViews.swift */,
 				E37298010F80517A3057579E /* BundleUnpacker.swift */,
@@ -1106,6 +1109,7 @@
 				6CA4A4E301BCB015E19AF7A8 /* AppWindows.swift in Sources */,
 				853E83FF7FF5B9A7FDE5E638 /* BootScreen.swift in Sources */,
 				1FFCB41B1647FB48D3A5A2F2 /* BuildBridge.swift in Sources */,
+				06F6D0A4C76DA9F6998DB580 /* BuildBridgeConnection.swift in Sources */,
 				83A180A9539EC30C390511B7 /* BuildBridgeModels.swift in Sources */,
 				BBE5BE92F2656ADAAB76062A /* BuildViews.swift in Sources */,
 				7FA5D73DC2780CACC7399534 /* BundleUnpacker.swift in Sources */,

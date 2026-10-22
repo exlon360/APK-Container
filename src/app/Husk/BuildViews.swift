@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import SwiftUI
 import UniformTypeIdentifiers
+import UIKit
 
 struct BuildScreen: View {
     @ObservedObject private var bridge = BuildBridgeStore.shared
@@ -25,10 +26,19 @@ struct BuildScreen: View {
                         }.buttonStyle(.plain)
                     }
                     Spacer(minLength: 8)
+                    if bridge.profile != nil && !bridge.connected {
+                        Button { Task { await bridge.refresh() } } label: {
+                            if bridge.checkingConnection { ProgressView() }
+                            else { Image(systemName: "arrow.clockwise") }
+                        }.buttonStyle(.bordered).disabled(bridge.checkingConnection || bridge.busy)
+                            .accessibilityLabel("Reconnect to Mac")
+                    }
                     Button { bridge.newChat() } label: { Image(systemName: "plus").font(.title3) }
                         .buttonStyle(.bordered).accessibilityLabel("New app chat")
                     Menu {
                         Button { router.tab = .myApps } label: { Label("My Apps", systemImage: "square.stack.3d.up") }
+                        Button { Task { await bridge.refresh() } } label: { Label("Reconnect to Mac", systemImage: "arrow.clockwise") }
+                            .disabled(bridge.profile == nil || bridge.checkingConnection || bridge.busy)
                         Button { showSetup = true } label: { Label("Pairing setup", systemImage: "link") }
                         Button { showImporter = true } label: { Label("Import agent.prf", systemImage: "doc.badge.plus") }
                         if bridge.profile != nil { Button("Forget this Mac", role: .destructive) { showForget = true } }
@@ -306,6 +316,8 @@ private struct BuildApprovalCard: View {
     }
 }
 private struct BridgeSetupSheet: View {
+    @ObservedObject private var bridge = BuildBridgeStore.shared
+    @State private var macAddress = ""
     @Environment(\.dismiss) private var dismiss
     @Binding var showImporter: Bool
     var body: some View {
@@ -314,10 +326,11 @@ private struct BridgeSetupSheet: View {
                 VStack(alignment: .leading, spacing: 24) {
                     Image(systemName: "laptopcomputer.and.iphone").font(.system(size: 48)).foregroundStyle(.blue)
                     Text("Your Mac builds. Your device creates.").font(.largeTitle.bold())
+                    if bridge.profile != nil { connectionCard }
                     step("1", "Install APK Container Bridge", "Open the Mac companion while Codex is signed in on that Mac.")
-                    Link("Download the Mac Bridge", destination: URL(string: "https://github.com/exlon360/APK-Container/releases/tag/v1.0.0-preview.9")!)
+                    Link("Download the Mac Bridge", destination: URL(string: "https://github.com/exlon360/APK-Container/releases/tag/v1.0.0-preview.10")!)
                     step("2", "Generate agent.prf", "In the Mac bridge, choose Generate agent.prf. AirDrop the file or save it in Files, then import it here.")
-                    step("3", "Pair Skill /apk", "Choose Pair Skill /apk on your Mac, or send /apk pair in Codex. Keep the bridge open and both devices on the same network or VPN.")
+                    step("3", "Pair Skill /apk", "Choose Pair Skill /apk on your Mac, or send /apk pair in Codex. Keep the bridge running and both devices on the same network or VPN.")
                     step("4", "Build your app", "Describe your idea in Build. Replies arrive here, and verified APKs appear in My Apps. The + button starts another app chat.")
                     Button("Import agent.prf") {
                         dismiss()
@@ -327,8 +340,37 @@ private struct BridgeSetupSheet: View {
                         .font(.footnote).foregroundStyle(.secondary)
                 }.padding(24)
             }.navigationTitle("Mac Bridge").navigationBarTitleDisplayMode(.inline)
+                .onAppear { macAddress = bridge.profile?.url ?? "" }
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
+    }
+    private var connectionCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label(bridge.connectionLabel, systemImage: bridge.connected ? "checkmark.circle" : "wifi.exclamationmark")
+                .font(.headline)
+            if let address = bridge.connectedAddress {
+                Text("Connected through " + address).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+            }
+            Text("Keep the Mac bridge running and both devices on the same Wi-Fi or a reachable VPN. In Settings, allow Local Network for APK Container. If you run it inside LiveContainer, allow it for LiveContainer too.")
+                .font(.callout).foregroundStyle(.secondary)
+            HStack {
+                Button(bridge.checkingConnection ? "Connecting…" : "Reconnect") { Task { await bridge.refresh() } }
+                    .buttonStyle(.borderedProminent).disabled(bridge.checkingConnection || bridge.busy)
+                Button("Open Settings") {
+                    if let settings = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(settings) }
+                }.buttonStyle(.bordered)
+            }
+            Divider()
+            Text("Mac address").font(.subheadline.bold())
+            TextField("https://192.168.1.20:48152", text: $macAddress)
+                .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
+                .textFieldStyle(.roundedBorder).accessibilityLabel("Mac bridge address")
+            Text("Copy the address shown in the Mac bridge if your network changed. Your saved pairing and certificate stay the same.")
+                .font(.caption).foregroundStyle(.secondary)
+            Button("Use This Address") { Task { await bridge.updateAddress(macAddress) } }
+                .buttonStyle(.bordered).disabled(macAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || bridge.checkingConnection || bridge.busy)
+            if let error = bridge.error { Text(error).font(.callout).foregroundStyle(.orange) }
+        }.padding(18).background(Console.card, in: RoundedRectangle(cornerRadius: 20))
     }
     private func step(_ number: String, _ title: String, _ detail: String) -> some View {
         HStack(alignment: .top, spacing: 14) {

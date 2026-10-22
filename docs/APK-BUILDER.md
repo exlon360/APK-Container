@@ -1,18 +1,18 @@
 # Build, My Apps, Repositories, and Store
 
-Preview 9 adds a native app library inspired by LiveContainer, a repository-backed Store, and a paired Mac build workflow. It preserves APK Container's existing Android engines, app-only session controls, display settings, JIT methods, and memory entitlements.
+Preview 10 includes a native app library inspired by LiveContainer, a repository-backed Store, and a paired Mac build workflow. It preserves APK Container's existing Android engines, app-only session controls, display settings, JIT methods, and memory entitlements.
 
 ## Pair your Mac
 
 The packaged Mac companion requires **Apple Silicon and macOS 13.5 or later**. Install Codex and sign in before pairing. The bridge uses the installed Codex app-server and account; there is no separate API key to enter.
 
-1. Download `APKContainer-Bridge-preview9.zip` from the same release as the IPA. Extract **APK Container Bridge.app** into `~/Applications` or `/Applications`. The preview is ad-hoc signed, not notarized; macOS may require **Privacy & Security → Open Anyway** on first launch.
-2. Open the companion and click **Start Bridge**. Keep it open while building. Closing the window stops its bridge process; saved projects remain on disk.
+1. Download `APKContainer-Bridge-preview10.zip` from the same release as the IPA. Extract **APK Container Bridge.app** into `~/Applications` or `/Applications`. The preview is ad-hoc signed, not notarized; macOS may require **Privacy & Security → Open Anyway** on first launch.
+2. Open the companion. A configured bridge starts automatically; on first setup, click **Start Bridge**. Closing its window keeps it running. **Stop Bridge** or **Quit** stops it deliberately; saved projects remain on disk. While running, the companion prevents idle system sleep without changing the Mac’s sleep settings. Closing the laptop lid, logging out, or shutting down can still disconnect it.
 3. Click **Generate agent.prf** and save the pairing file. Transfer it privately to your device, for example with AirDrop. In APK Container, open **Build → Import agent.prf**. The file contains a credential: keep it private and do not add it to a repository.
 4. On the Mac, click **Pair Skill /apk**. This installs the bundled `/apk` skill and marks the bridge paired. Restart Codex if its skill list does not yet include a newly installed skill.
-5. Keep the Mac and device on the same reachable network. **Build** shows **Mac connected** when the paired bridge is reachable. Describe your app and send it.
+5. Keep the Mac and device on the same reachable network and allow local-network access on the device. **Build** shows **Mac connected** when the paired bridge is reachable. Describe your app and send it.
 
-The connection is HTTPS with an exact certificate pin from `agent.prf`, plus a bearer credential stored in the device Keychain. The bridge rejects browser-origin requests and only exposes its project operations. It does not expose Codex's app-server directly. The default address is the Mac's `.local` hostname on port **48152**. A private VPN can work if the configured address is reachable; this release does not include a cloud relay.
+The connection is HTTPS with an exact certificate pin from `agent.prf`, plus a bearer credential stored in the device Keychain. The bridge rejects browser-origin requests and only exposes its project operations. It does not expose Codex's app-server directly. Fresh profiles prefer the Mac’s current numeric LAN address on port **48152** and include its `.local` hostname and other eligible LAN addresses as fallbacks. The device probes the saved addresses with the same certificate pin, validates the bridge identity, and uses a reachable one. The server accepts IPv4 and IPv6. A private VPN can work if the configured address is reachable; this release does not include a cloud relay.
 
 The command-line entry point is bundled at `APK Container Bridge.app/Contents/Resources/bridge/bridge.mjs`; use its bundled `node/bin/node`. `init --url https://HOST:48152` selects a reachable hostname for a new configuration. An existing configuration is retained by `init`. Export a new profile whenever you deliberately change its address or credentials.
 
@@ -57,7 +57,9 @@ Enable or disable each feed, add another GitHub repository, or remove it. The **
 
 ## Troubleshooting
 
-- **Mac offline:** keep the companion running, allow local-network access, and check the same-network/VPN address and firewall. Reimport the matching profile if you paired a different bridge.
+- **Cannot reach Mac / request timed out:** click **Reconnect**, or generate and import a fresh `agent.prf` to get current direct-IP addresses. Check that both devices are on the same reachable Wi-Fi; guest/client-isolated Wi-Fi and VPN routing can block device-to-Mac traffic. In iOS Settings, allow **Local Network** for APK Container—or for **LiveContainer** when it hosts APK Container. Use the address shown in the Mac companion if you add an address manually. No firewall or VPN settings are changed automatically.
+- **Permission or pairing error:** follow the specific explanation in Build. HTTP/server errors no longer turn a healthy connection into a generic “Mac offline” message. Pairing keeps the same token and certificate unless you deliberately replace the bridge configuration.
+- **Mac sleeps or window closes:** the updated bridge stays running when its window closes and holds an idle-sleep assertion while running. Explicit Stop/Quit and laptop-lid sleep still disconnect it. Open it from the Dock to show its window again.
 - **Run /apk on your Mac:** click **Pair Skill /apk** in the companion.
 - **Codex cannot start or authenticate:** open Codex on the Mac, sign in, and retry. Use the current desktop app with its bundled app-server.
 - **An approval is waiting:** review and answer the visible request in Build. Unsupported interactions are declined and reported.
@@ -73,7 +75,9 @@ From the repository root, with a standalone arm64 Node.js 24 binary:
 APK_CONTAINER_NODE=/absolute/path/to/node bridge/scripts/package-mac.sh
 node --test tests/bridge/*.test.mjs
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer sh tests/build-bridge/run.sh
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer sh tests/bridge-connection/run.sh
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer bash tests/mac-bridge/run.sh
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer sh tests/repositories/run.sh
 ```
 
-The companion bundles Node and its full version-specific license, bridge source, and `/apk` skill. It does not bundle Codex or an Android SDK. Packaging verifies the app signature and bundled executable resources. The backend suite uses controlled app-server fixtures; a separate installed app-server smoke test checks initialization and request-schema acceptance without running an inference. Real device pairing, a full generated-app build, sideloading, and Android execution still require device testing.
+The companion bundles Node and its full version-specific license, bridge source, and `/apk` skill. It does not bundle Codex or an Android SDK. Packaging verifies the app signature and bundled executable resources. Connection regression tests exercise direct-IP fallback, pinned TLS, read-only reconnection, and IPv4/IPv6 listeners. Build POSTs are never blindly replayed after a network error. The backend suite uses controlled app-server fixtures; a separate installed app-server smoke test checks initialization and request-schema acceptance without running an inference. Real device pairing, a full generated-app build, sideloading, and Android execution still require device testing.

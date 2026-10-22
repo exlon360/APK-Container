@@ -5,10 +5,11 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { atomicJSON, checkpointPaths, privateDirectory } from './backup.mjs';
+import { connectionOrigins } from './network.mjs';
 
 export const DEFAULT_STATE = path.join(os.homedir(), 'Library/Application Support/APK Container Bridge');
 export const DEFAULT_PROJECTS = path.join(os.homedir(), 'Documents/ChatGPT/apk files');
-export const VERSION = '1.1.0';
+export const VERSION = '1.1.1';
 export function configurationFile(stateDir) { return path.join(stateDir, 'configuration.json'); }
 export function readConfiguration(stateDir) {
   if (!fs.existsSync(configurationFile(stateDir))) throw new Error('The bridge is not set up yet. Choose Start Bridge or Generate agent.prf on your Mac.');
@@ -17,7 +18,7 @@ export function readConfiguration(stateDir) {
   return config;
 }
 export function profile(config) {
-  return { format: 'apk-container-agent', version: 1, bridgeID: config.bridgeID, name: config.name, url: config.url, token: config.token, certificateSHA256: config.certificateSHA256, createdAt: config.createdAt };
+  return { format: 'apk-container-agent', version: 1, bridgeID: config.bridgeID, name: config.name, ...connectionOrigins(config), token: config.token, certificateSHA256: config.certificateSHA256, createdAt: config.createdAt };
 }
 export function discoverCodex() {
   if (process.env.APK_CONTAINER_CODEX) return process.env.APK_CONTAINER_CODEX;

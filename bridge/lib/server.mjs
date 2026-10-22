@@ -23,7 +23,7 @@ async function body(request) {
     return value;
   } catch { throw new APIError(400, 'The request is not valid JSON.'); }
 }
-export async function startHTTPS(service, { host = '0.0.0.0', port = service.config.port } = {}) {
+export async function startHTTPS(service, { host, port = service.config.port } = {}) {
   const server = https.createServer({ key: fs.readFileSync(path.join(service.config.stateDir, 'bridge-key.pem')), cert: fs.readFileSync(path.join(service.config.stateDir, 'bridge-cert.pem')), minVersion: 'TLSv1.2' }, async (request, response) => {
     try {
       // Native pinned clients do not send Origin; reject browser-originated operations.
@@ -55,6 +55,21 @@ export async function startHTTPS(service, { host = '0.0.0.0', port = service.con
     }
   });
   server.headersTimeout = 15000; server.requestTimeout = 30000; server.keepAliveTimeout = 5000; server.maxHeadersCount = 32;
-  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, resolve); });
+  const listen = address => new Promise((resolve, reject) => {
+    const failed = error => { server.off('listening', ready); reject(error); };
+    const ready = () => { server.off('error', failed); resolve(); };
+    server.once('error', failed); server.once('listening', ready);
+    server.listen({ port, host: address, ipv6Only: false });
+  });
+  if (host !== undefined) await listen(host);
+  else {
+    // A .local name often resolves to IPv6 first. Bind a dual-stack socket so
+    // those connections work as well as numeric IPv4 profile addresses.
+    try { await listen('::'); }
+    catch (error) {
+      if (!['EAFNOSUPPORT', 'EADDRNOTAVAIL', 'EPROTONOSUPPORT'].includes(error.code)) throw error;
+      await listen('0.0.0.0');
+    }
+  }
   return server;
 }

@@ -6,7 +6,7 @@ repo_root="$(cd "$(dirname "$0")/../.." && pwd)"
 node_binary="${APK_CONTAINER_NODE:-$HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node}"
 output_directory="${APK_CONTAINER_MAC_OUTPUT:-$repo_root/build}"
 app_path="$output_directory/APK Container Bridge.app"
-zip_path="$output_directory/APKContainer-Bridge-preview9.zip"
+zip_path="$output_directory/APKContainer-Bridge-preview10.zip"
 
 if [[ ! -x "$node_binary" ]]; then
     echo 'Set APK_CONTAINER_NODE to a standalone Apple Silicon Node.js 24 executable.' >&2
@@ -67,8 +67,8 @@ cat > "$bundle/Contents/Info.plist" <<'PLIST'
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleName</key><string>APK Container Bridge</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.1.0</string>
-  <key>CFBundleVersion</key><string>9</string>
+  <key>CFBundleShortVersionString</key><string>1.1.1</string>
+  <key>CFBundleVersion</key><string>10</string>
   <key>LSMinimumSystemVersion</key><string>13.5</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSLocalNetworkUsageDescription</key><string>Connect APK Container on your iPhone or iPad to this Mac to build and download your apps.</string>
@@ -80,7 +80,7 @@ PLIST
 /usr/bin/codesign --force --sign - "$bundle"
 /usr/bin/codesign --verify --deep --strict "$bundle"
 "$bundle/Contents/MacOS/APKContainerBridge" --smoke-test
-/usr/bin/ditto -c -k --sequesterRsrc --keepParent "$bundle" "$stage/APKContainer-Bridge-preview9.zip"
+/usr/bin/ditto -c -k --sequesterRsrc --keepParent "$bundle" "$stage/APKContainer-Bridge-preview10.zip"
 
 # Every replacement has its own verified checkpoint, outside the repository.
 "$node_binary" --input-type=module - "$repo_root" "$app_path" "$zip_path" <<'NODE'
@@ -89,7 +89,7 @@ import path from 'node:path';
 const [root, app, archive] = process.argv.slice(2);
 const { checkpointPaths } = await import(pathToFileURL(path.join(root, 'bridge/lib/backup.mjs')));
 const checkpoint = checkpointPaths([app, archive], {
-  label: 'apk-mac-package', summary: 'Package APK Container Bridge preview 9; preserve previous output artifacts'
+  label: 'apk-mac-package', summary: 'Package APK Container Bridge preview 10; preserve previous output artifacts'
 });
 console.log(`Verified package checkpoint: ${checkpoint}`);
 NODE
@@ -97,7 +97,7 @@ mkdir -p "$output_directory"
 rm -rf "$app_path"
 rm -f "$zip_path"
 /usr/bin/ditto "$bundle" "$app_path"
-/usr/bin/ditto "$stage/APKContainer-Bridge-preview9.zip" "$zip_path"
+/usr/bin/ditto "$stage/APKContainer-Bridge-preview10.zip" "$zip_path"
 # Document-provider folders can add Finder metadata after a copy. Clear only
 # this newly created output, then validate the actual shipped archive outside
 # the provider so that packaging does not depend on its metadata timing.

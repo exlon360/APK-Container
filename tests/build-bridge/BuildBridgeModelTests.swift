@@ -21,6 +21,22 @@ import Foundation
             do { _ = try profile.endpoint(path); preconditionFailure("Accepted unsafe path") } catch {}
         }
         do { _ = try AgentProfile.read(Data(repeating: 0, count: 32_769)); preconditionFailure() } catch {}
+        precondition(profile.alternateURLs == nil && profile.origins.count == 1, "Legacy pairing files must still work")
+        var multiple = valid
+        multiple["alternateURLs"] = ["https://192.168.1.20:48152", "https://[::1]:48152", "https://Mac.local:48152/"]
+        let candidates = try decode(multiple)
+        precondition(candidates.origins.count == 3, "Duplicate origins should be removed")
+        let alternateEndpoint = try candidates.endpoint("/v1/status", origin: "https://192.168.1.20:48152")
+        precondition(alternateEndpoint.host == "192.168.1.20")
+        do { _ = try candidates.endpoint("/v1/status", origin: "https://unpaired.test"); preconditionFailure("Accepted an unlisted origin") } catch {}
+        for alternatives in [["http://192.168.1.20:48152"], ["https://user:password@Mac.local"], ["https://Mac.local/path"], Array(repeating: "https://Mac.local:48152", count: 6)] {
+            var malformed = valid; malformed["alternateURLs"] = alternatives
+            do { _ = try decode(malformed); preconditionFailure("Accepted unsafe or excessive candidates") } catch {}
+        }
+        let changed = try candidates.replacingAddress("192.168.1.25")
+        precondition(changed.url == "https://192.168.1.25:48152" && changed.origins.contains(profile.url))
+        precondition(changed.token == profile.token && changed.certificateSHA256 == profile.certificateSHA256 && changed.bridgeID == profile.bridgeID)
+        do { _ = try candidates.replacingAddress("http://192.168.1.25"); preconditionFailure("Accepted plaintext manual address") } catch {}
         let project = """
         {"id":"id","name":"My App","status":"awaitingApproval","createdAt":"now","updatedAt":"now","threadID":null,"messages":[{"id":"m","role":"user","text":"Build a timer","createdAt":"now"}],"artifacts":[],"approvals":[{"id":"a","kind":"input","title":"Question","detail":"Choose","createdAt":"now","questions":[{"id":"q","header":"Color","question":"Which color?","options":[{"label":"Blue","description":"Blue theme"}]}]}],"summary":null,"error":null}
         """

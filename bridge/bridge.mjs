@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { DEFAULT_STATE, initialize, readConfiguration, pair, exportProfile, VERSION } from './lib/profile.mjs';
 import { BridgeService } from './lib/service.mjs';
 import { startHTTPS } from './lib/server.mjs';
+import { connectionOrigins } from './lib/network.mjs';
 
 export function argumentsFor(argv) {
   const command = argv[0] || 'help', options = {};
@@ -19,7 +20,7 @@ export function argumentsFor(argv) {
   }
   return { command, options };
 }
-function publicStatus(config) { return { bridgeID: config.bridgeID, name: config.name, url: config.url, paired: Boolean(config.pairedAt), profilePath: path.join(config.stateDir, 'agent.prf'), stateDir: config.stateDir, projectsDir: config.projectsDir, version: VERSION }; }
+function publicStatus(config) { return { bridgeID: config.bridgeID, name: config.name, ...connectionOrigins(config), paired: Boolean(config.pairedAt), profilePath: path.join(config.stateDir, 'agent.prf'), stateDir: config.stateDir, projectsDir: config.projectsDir, version: VERSION }; }
 export async function main(argv = process.argv.slice(2)) {
   const { command, options } = argumentsFor(argv), stateDir = path.resolve(options['state-dir'] || DEFAULT_STATE);
   if (command === 'init') {
@@ -40,7 +41,7 @@ export async function main(argv = process.argv.slice(2)) {
   if (command === 'start') {
     const service = new BridgeService(readConfiguration(stateDir));
     const server = await startHTTPS(service);
-    console.log(JSON.stringify({ event: 'listening', url: service.config.url, port: server.address().port }));
+    console.log(JSON.stringify({ event: 'listening', ...connectionOrigins(service.config), port: server.address().port }));
     let stopping = false;
     const stop = () => {
       if (stopping) return; stopping = true;
@@ -54,4 +55,11 @@ export async function main(argv = process.argv.slice(2)) {
   }
   throw new Error(`Unknown command ${command}`);
 }
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch(error => { console.error(JSON.stringify({ error: String(error.message || error) })); process.exitCode = 1; });
+function invokedAsScript() {
+  if (!process.argv[1]) return false;
+  try {
+    // Node resolves the module URL through symlinks, including macOS /var aliases.
+    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+  } catch { return false; }
+}
+if (invokedAsScript()) main().catch(error => { console.error(JSON.stringify({ error: String(error.message || error) })); process.exitCode = 1; });

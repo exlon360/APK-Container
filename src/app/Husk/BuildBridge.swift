@@ -4,32 +4,6 @@ import SwiftUI
 import Security
 import CryptoKit
 
-/// Trust exactly the certificate in the locally transferred pairing file. Credentials
-/// never go to a redirected host, and only this dedicated session accepts the pinned cert.
-final class BuildBridgeTLS: NSObject, URLSessionDelegate, URLSessionTaskDelegate {
-    let host: String
-    let pin: String
-    init(profile: AgentProfile) {
-        host = URL(string: profile.url)!.host!.lowercased()
-        pin = profile.certificateSHA256.lowercased()
-    }
-    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
-                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
-              challenge.protectionSpace.host.lowercased() == host,
-              let trust = challenge.protectionSpace.serverTrust,
-              let certificate = SecTrustGetCertificateAtIndex(trust, 0) else {
-            completionHandler(.cancelAuthenticationChallenge, nil); return
-        }
-        let hash = SHA256.hash(data: SecCertificateCopyData(certificate) as Data).map { String(format: "%02x", $0) }.joined()
-        guard hash == pin else { completionHandler(.cancelAuthenticationChallenge, nil); return }
-        completionHandler(.useCredential, URLCredential(trust: trust))
-    }
-    func urlSession(_ session: URLSession, task: URLSessionTask,
-                    willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
-                    completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
-}
-
 @MainActor
 final class BuildBridgeStore: ObservableObject {
     static let shared = BuildBridgeStore()
@@ -38,11 +12,15 @@ final class BuildBridgeStore: ObservableObject {
     @Published var selectedID: String?
     @Published private(set) var connected = false
     @Published private(set) var paired = false
+    @Published private(set) var checkingConnection = false
+    @Published private(set) var connectedAddress: String?
     @Published private(set) var busy = false
     @Published private(set) var downloading: String?
     @Published var error: String?
     @Published var draft = ""
-    private var session: URLSession?
+    private var connection: BuildBridgeConnection?
+    private var refreshID: UUID?
+    private var pollID: UUID?
     private var profileGeneration = UUID()
     private var lastRefresh = Date.distantPast
     private static let service = "com.apkcontainer.build-bridge"
@@ -52,7 +30,7 @@ final class BuildBridgeStore: ObservableObject {
     var selected: BuildProject? { projects.first { $0.id == selectedID } }
     var connectionLabel: String {
         guard profile != nil else { return "Connect your Mac" }
-        if !connected { return "Mac offline" }
+        if !connected { return checkingConnection ? "Connecting…" : "Connection issue" }
         return paired ? "Mac connected" : "Run /apk pair on your Mac"
     }
 
@@ -80,79 +58,87 @@ final class BuildBridgeStore: ObservableObject {
         do {
             let data = try Data(contentsOf: url, options: .mappedIfSafe)
             let value = try AgentProfile.read(data)
-            let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: Self.service, kSecAttrAccount as String: "profile"]
-            let attrs: [String: Any] = [kSecValueData as String: try JSONEncoder().encode(value),
-                kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
-            var status = SecItemUpdate(query as CFDictionary, attrs as CFDictionary)
-            if status == errSecItemNotFound {
-                status = SecItemAdd(query.merging(attrs) { _, new in new } as CFDictionary, nil)
-            }
-            guard status == errSecSuccess else { throw BuildBridgeError.message("Couldn't save the pairing securely (\(status)).") }
-            if profile?.bridgeID != value.bridgeID { projects = []; selectedID = nil }
-            profileGeneration = UUID()
-            profile = value; session?.invalidateAndCancel(); session = nil
-            connected = false; paired = false; error = nil
-            saveCache()
+            try saveProfile(value)
             Task { await refresh() }
-        } catch { self.error = error.localizedDescription }
+        } catch { report(error) }
+    }
+    private func saveProfile(_ value: AgentProfile) throws {
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: Self.service, kSecAttrAccount as String: "profile"]
+        let attrs: [String: Any] = [kSecValueData as String: try JSONEncoder().encode(value),
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
+        var status = SecItemUpdate(query as CFDictionary, attrs as CFDictionary)
+        if status == errSecItemNotFound { status = SecItemAdd(query.merging(attrs) { _, new in new } as CFDictionary, nil) }
+        guard status == errSecSuccess else { throw BuildBridgeError.message("Couldn't save the pairing securely (\(status)).") }
+        if profile?.bridgeID != value.bridgeID { projects = []; selectedID = nil }
+        resetConnection()
+        profile = value; error = nil; saveCache()
+    }
+    func updateAddress(_ address: String) async {
+        guard let profile, !busy else { return }
+        do { try saveProfile(profile.replacingAddress(address)); await refresh() }
+        catch { report(error) }
+    }
+    private func resetConnection() {
+        profileGeneration = UUID()
+        if let connection { Task { await connection.close() } }
+        connection = nil; connected = false; paired = false; connectedAddress = nil
+        checkingConnection = false; refreshID = nil; pollID = nil; lastRefresh = .distantPast
     }
     func forgetMac() {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service, kSecAttrAccount as String: "profile"]
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else { error = "Couldn't remove the saved pairing."; return }
-        profileGeneration = UUID()
-        session?.invalidateAndCancel(); session = nil; profile = nil; connected = false; paired = false
+        resetConnection(); profile = nil; error = nil
         projects = []; selectedID = nil; draft = ""
         try? FileManager.default.removeItem(at: Self.cacheURL)
     }
-    private func client(_ profile: AgentProfile) -> URLSession {
-        if let session { return session }
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 20
-        configuration.timeoutIntervalForResource = 600
-        configuration.httpShouldSetCookies = false
-        configuration.urlCredentialStorage = nil
-        let result = URLSession(configuration: configuration, delegate: BuildBridgeTLS(profile: profile), delegateQueue: nil)
-        session = result
+    private func transport(_ profile: AgentProfile) -> BuildBridgeConnection {
+        if let connection { return connection }
+        let result = BuildBridgeConnection(profile: profile)
+        connection = result
         return result
     }
     private func request(_ path: String, method: String = "GET", body: [String: Any]? = nil) async throws -> Data {
         guard let profile else { throw BuildBridgeError.message("Import agent.prf to connect your Mac.") }
-        var request = URLRequest(url: try profile.endpoint(path))
         let generation = profileGeneration
-        request.httpMethod = method
-        if method != "GET" { request.timeoutInterval = 600 }
-        request.setValue("Bearer " + profile.token, forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        if let body { request.httpBody = try JSONSerialization.data(withJSONObject: body); request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
+        let bytes = try body.map { try JSONSerialization.data(withJSONObject: $0) }
         do {
-            let (data, response) = try await client(profile).data(for: request)
+            let data = try await transport(profile).request(path, method: method, body: bytes)
             guard profileGeneration == generation else { throw CancellationError() }
-            guard data.count <= 8 * 1024 * 1024 else { throw BuildBridgeError.message("The Mac sent an oversized response.") }
-            guard let response = response as? HTTPURLResponse, (200...299).contains(response.statusCode) else {
-                let message = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
-                throw BuildBridgeError.message(message ?? "The Mac couldn't complete this request. Check APK Container Bridge.")
-            }
             return data
         } catch {
             if profileGeneration != generation || Self.isCancellation(error) { throw CancellationError() }
             throw error
         }
     }
-    private static func isCancellation(_ error: Error) -> Bool {
-        error is CancellationError || (error as? URLError)?.code == .cancelled
+    private static func isCancellation(_ error: Error) -> Bool { BuildBridgeConnection.isCancellation(error) }
+    private func report(_ failure: Error) {
+        guard !Self.isCancellation(failure) else { return }
+        if let failure = failure as? BuildConnectionFailure {
+            if failure.isTransportFailure { connected = false; connectedAddress = nil }
+            if case .response = failure { connected = true }
+            if failure.needsPairing { paired = false }
+        }
+        error = failure is DecodingError
+            ? "The Mac answered, but its reply couldn't be read. Update APK Container Bridge on the Mac, then reconnect."
+            : failure.localizedDescription
     }
-    private struct Status: Decodable { let bridgeID: String; let paired: Bool }
     private struct Projects: Decodable { let projects: [BuildProject] }
     private struct Project: Decodable { let project: BuildProject }
     func refresh() async {
-        guard profile != nil, !busy else { return }
+        guard let profile, !busy, refreshID == nil, pollID == nil else { return }
+        let id = UUID(), generation = profileGeneration
+        refreshID = id; checkingConnection = true; lastRefresh = Date()
+        defer { if refreshID == id { refreshID = nil; checkingConnection = false } }
         do {
-            let status = try JSONDecoder().decode(Status.self, from: await request("/v1/status"))
-            guard status.bridgeID == profile?.bridgeID else { throw BuildBridgeError.message("This pairing belongs to a different Mac bridge.") }
-            connected = true; paired = status.paired
+            let transport = transport(profile)
+            let status = try await transport.connect()
+            guard profileGeneration == generation else { throw CancellationError() }
+            let address = await transport.activeAddress()
+            guard profileGeneration == generation else { throw CancellationError() }
+            connected = true; paired = status.paired; connectedAddress = address
             let listed = try JSONDecoder().decode(Projects.self, from: await request("/v1/projects")).projects
             projects = listed.map { compact in
                 guard let cached = projects.first(where: { $0.id == compact.id }) else { return compact }
@@ -164,19 +150,30 @@ final class BuildBridgeStore: ObservableObject {
             if let id = selectedID, projects.contains(where: { $0.id == id }) {
                 upsert(try JSONDecoder().decode(Project.self, from: await request("/v1/projects/" + id)).project)
             }
-            lastRefresh = Date(); error = nil; saveCache()
-        } catch is CancellationError { }
-        catch { connected = false; self.error = error.localizedDescription }
+            error = nil; saveCache()
+        } catch {
+            if profileGeneration == generation { report(error) }
+        }
     }
     func poll() async {
+        guard !busy, refreshID == nil, pollID == nil else { return }
         if selected?.isActive != true || !connected {
             if Date().timeIntervalSince(lastRefresh) > 8 { await refresh() }
             return
         }
-        guard let id = selectedID, !busy else { return }
-        do { upsert(try JSONDecoder().decode(Project.self, from: await request("/v1/projects/" + id)).project); connected = true }
-        catch is CancellationError { }
-        catch { connected = false; self.error = error.localizedDescription }
+        guard let projectID = selectedID else { return }
+        let id = UUID(), generation = profileGeneration
+        pollID = id
+        defer { if pollID == id { pollID = nil } }
+        do {
+            upsert(try JSONDecoder().decode(Project.self, from: await request("/v1/projects/" + projectID)).project)
+            connected = true; error = nil
+            let address = await connection?.activeAddress()
+            guard profileGeneration == generation else { throw CancellationError() }
+            connectedAddress = address
+        } catch {
+            if profileGeneration == generation { report(error) }
+        }
     }
     private func upsert(_ project: BuildProject) {
         if let cached = projects.first(where: { $0.id == project.id }), cached.updatedAt > project.updatedAt { return }
@@ -190,7 +187,7 @@ final class BuildBridgeStore: ObservableObject {
         Task {
             do { upsert(try JSONDecoder().decode(Project.self, from: await request("/v1/projects/" + project.id)).project) }
             catch is CancellationError { }
-            catch { self.error = error.localizedDescription }
+            catch { report(error) }
         }
     }
     func send() async {
@@ -211,19 +208,19 @@ final class BuildBridgeStore: ObservableObject {
             upsert(project)
             if draft == submittedDraft { draft = "" }
         } catch is CancellationError { }
-        catch { self.error = error.localizedDescription }
+        catch { report(error) }
     }
     func interrupt(_ project: BuildProject) async {
         do { upsert(try JSONDecoder().decode(Project.self, from: await request("/v1/projects/" + project.id + "/interrupt", method: "POST", body: [:])).project) }
         catch is CancellationError { }
-        catch { self.error = error.localizedDescription }
+        catch { report(error) }
     }
     func approve(_ approval: BuildApproval, project: BuildProject, accept: Bool, answers: [String: [String]] = [:]) async {
         do {
             upsert(try JSONDecoder().decode(Project.self, from: await request("/v1/projects/" + project.id + "/approvals/" + approval.id,
                 method: "POST", body: ["decision": accept ? "accept" : "decline", "answers": answers])).project)
         } catch is CancellationError { }
-        catch { self.error = error.localizedDescription }
+        catch { report(error) }
     }
     func install(_ artifact: BuildArtifact, project: BuildProject) async {
         guard let profile, downloading == nil else { return }
@@ -236,10 +233,7 @@ final class BuildBridgeStore: ObservableObject {
                   artifact.downloadPath == "/v1/projects/\(project.id)/artifacts/\(artifact.id)" else {
                 throw BuildBridgeError.message("The Mac sent invalid APK metadata.")
             }
-            var request = URLRequest(url: try profile.endpoint(artifact.downloadPath))
-            request.timeoutInterval = 60
-            request.setValue("Bearer " + profile.token, forHTTPHeaderField: "Authorization")
-            let (file, response) = try await client(profile).download(for: request)
+            let (file, response) = try await transport(profile).download(artifact.downloadPath)
             guard profileGeneration == generation else {
                 try? FileManager.default.removeItem(at: file)
                 throw CancellationError()
@@ -267,7 +261,7 @@ final class BuildBridgeStore: ObservableObject {
             try FileManager.default.moveItem(at: file, to: destination)
             IncomingFiles.shared.receive(destination)
         } catch {
-            if profileGeneration == generation && !Self.isCancellation(error) { self.error = error.localizedDescription }
+            if profileGeneration == generation { report(error) }
         }
     }
 }

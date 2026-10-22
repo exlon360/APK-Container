@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import Foundation
 
-struct AgentProfile: Codable, Equatable {
+struct AgentProfile: Codable, Equatable, Sendable {
     let format: String
     let version: Int
     let bridgeID: String
@@ -10,6 +10,23 @@ struct AgentProfile: Codable, Equatable {
     let token: String
     let certificateSHA256: String
     let createdAt: String
+    let alternateURLs: [String]?
+
+    var origins: [String] {
+        ([url] + (alternateURLs ?? [])).compactMap(Self.origin).reduce(into: []) { result, origin in
+            if !result.contains(origin) { result.append(origin) }
+        }
+    }
+
+    static func origin(_ value: String) -> String? {
+        guard var parts = URLComponents(string: value), parts.scheme?.lowercased() == "https",
+              let host = parts.host, !host.isEmpty,
+              parts.user == nil, parts.password == nil, parts.query == nil, parts.fragment == nil,
+              parts.path.isEmpty || parts.path == "/",
+              parts.port == nil || (1...65535).contains(parts.port!) else { return nil }
+        parts.scheme = "https"; parts.path = ""
+        return parts.url?.absoluteString
+    }
 
     static func read(_ data: Data) throws -> AgentProfile {
         guard data.count <= 32_768 else { throw BuildBridgeError.message("This pairing file is too large.") }
@@ -17,11 +34,9 @@ struct AgentProfile: Codable, Equatable {
         guard value.format == "apk-container-agent", value.version == 1,
               !value.bridgeID.isEmpty, value.bridgeID.count <= 128,
               !value.name.isEmpty, value.name.count <= 128,
-              let url = URLComponents(string: value.url), url.scheme == "https",
-              let host = url.host, !host.isEmpty,
-              url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
-              url.path.isEmpty || url.path == "/",
-              url.port == nil || (1...65535).contains(url.port!),
+              Self.origin(value.url) != nil,
+              (value.alternateURLs?.count ?? 0) <= 5,
+              (value.alternateURLs ?? []).allSatisfy({ Self.origin($0) != nil }),
               value.token.range(of: #"^[A-Za-z0-9_-]{32,256}$"#, options: .regularExpression) != nil,
               value.certificateSHA256.range(of: #"^[a-fA-F0-9]{64}$"#, options: .regularExpression) != nil else {
             throw BuildBridgeError.message("This isn't a valid APK Container Bridge pairing file. Generate a new agent.prf on your Mac.")
@@ -29,14 +44,29 @@ struct AgentProfile: Codable, Equatable {
         return value
     }
 
-    func endpoint(_ path: String) throws -> URL {
+    func replacingAddress(_ address: String) throws -> AgentProfile {
+        var text = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !text.contains("://") { text = "https://" + text }
+        guard var components = URLComponents(string: text) else { throw BuildBridgeError.message("Enter the Mac address shown in APK Container Bridge.") }
+        if components.port == nil { components.port = URLComponents(string: url)?.port ?? 48152 }
+        guard let origin = components.string.flatMap(Self.origin) else {
+            throw BuildBridgeError.message("Use an HTTPS Mac address without a path, such as https://192.168.1.20:48152.")
+        }
+        return AgentProfile(format: format, version: version, bridgeID: bridgeID, name: name,
+            url: origin, token: token, certificateSHA256: certificateSHA256, createdAt: createdAt,
+            alternateURLs: Array(origins.filter { $0 != origin }.prefix(5)))
+    }
+
+    func endpoint(_ path: String, origin: String? = nil) throws -> URL {
+        let selected = origin ?? url
         guard path.hasPrefix("/v1/"), !path.contains(".."), !path.contains("?"), !path.contains("#"),
-              let base = URLComponents(string: url) else { throw BuildBridgeError.message("Invalid bridge request.") }
-        var parts = base
+              let normalized = Self.origin(selected), origins.contains(normalized),
+              var parts = URLComponents(string: normalized) else { throw BuildBridgeError.message("Invalid bridge request.") }
         parts.path = path
         guard let result = parts.url else { throw BuildBridgeError.message("Invalid bridge address.") }
         return result
     }
+
 }
 
 enum BuildBridgeError: LocalizedError {

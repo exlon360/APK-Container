@@ -13,7 +13,7 @@ For `/apk pair`, or `/apk` without an app request:
 
 1. Run `scripts/apk.sh status` relative to this skill. If the Mac companion is missing, explain that APK Container Bridge must be installed first; do not invent a connected session.
 2. Run `scripts/apk.sh pair`. This enables the local bridge's authenticated device requests; it does not send an inference request or change Codex account credentials.
-3. Tell the user to keep the Mac bridge open, generate `agent.prf` there, and import that file in APK Container → Build. Do not print, publish, or send the token, private key, or profile contents. The file is a credential.
+3. Tell the user to keep the Mac bridge running (its window may be closed), generate `agent.prf` there, and import that file in APK Container → Build. Do not print, publish, or send the token, private key, or profile contents. The file is a credential.
 4. If Codex sidebar tools are available, find or create the `apk files` section, inspect `scripts/apk.sh projects --json`, and move only those returned thread IDs into that section. Capture the previous section placement before changing it. Do not message or modify unrelated tasks. If these app tools are unavailable, leave sidebar organization alone; app workspaces still live under `~/Documents/ChatGPT/apk files`.
 
 For `/apk sync`, refresh only the sidebar organization above. For `/apk status`, report the bridge status without dumping its private state directory.

@@ -6,7 +6,7 @@ APK Container is an Android-app-focused fork of [Husk by Leviidev and contributo
 
 - Import APKs and supported split bundles, open apps from the library, and manage their individual settings.
 - Browse ten included GitHub release repositories in **Store**; enable, disable, or add GitHub repositories in **Repositories**. Downloads use HTTPS, size limits, APK structure checks, and published SHA-256 digests when available.
-- Describe an app in **Build** and follow Codex replies from your paired Mac. **My Apps** keeps each conversation and its finished APKs. The companion **APK Container Bridge** includes the `/apk` skill and uses an encrypted, certificate-pinned connection.
+- Describe an app in **Build** and follow Codex replies from your paired Mac. **My Apps** keeps each conversation and its finished APKs. The companion **APK Container Bridge** includes the `/apk` skill and uses an encrypted, certificate-pinned connection with direct-IP/hostname fallback. It starts automatically once configured and stays running when its window closes.
 - Native iPhone/iPad resolution is the default for the translation layer. Choose performance presets or a custom 320–4096 pixel longest-edge limit; the other edge follows the display's proportions.
 - Apps can open fullscreen or in a movable window. Fixed-size rendering surfaces keep their aspect ratio when resized.
 - App sessions have no permanent host toolbar. Tap with three fingers for **App Files**, keyboard controls, or **Return to Apps**.
@@ -35,7 +35,7 @@ The app's identity is `com.apkcontainer.app`, with the `apkcontainer://` URL sch
 
 ## Build apps with your Mac
 
-Download **APK Container Bridge** alongside the IPA from Releases. On your Apple Silicon Mac, move it to `~/Applications`, open it, choose **Generate agent.prf**, and import that file under **Build** on your iPhone or iPad. Choose **Pair Skill /apk** on the Mac, then describe your app in Build. Keep the bridge open and both devices on the same network or a reachable private VPN. Codex must already be installed and signed in on the Mac.
+Download **APK Container Bridge** alongside the IPA from Releases. On your Apple Silicon Mac, move it to `~/Applications`, open it, choose **Generate agent.prf**, and import that file under **Build** on your iPhone or iPad. Choose **Pair Skill /apk** on the Mac, then describe your app in Build. Keep the bridge running and both devices on the same network or a reachable private VPN. Codex must already be installed and signed in on the Mac.
 
 Every new app gets its own project and Codex conversation under `~/Documents/ChatGPT/apk files`. Later messages edit that same project; **+** starts a separate app. Setup prompts are hidden from the device conversation, while Codex replies, questions, and approval requests remain visible. A completion card appears only when a finished turn produces a verified APK; opening **My Apps → Install APK** uses APK Container’s existing import flow.
 

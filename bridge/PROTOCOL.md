@@ -22,10 +22,10 @@ node bridge.mjs projects --json [--state-dir PATH]
 Defaults are `~/Library/Application Support/APK Container Bridge` for private
 state and `~/Documents/ChatGPT/apk files` for app projects. `status` is read-only
 and fails clearly if setup is absent. `init` is idempotent. `start` prints one
-JSON line containing `event: "listening"`, `url`, and `port`; SIGTERM or SIGINT
+JSON line containing `event: "listening"`, `url`, `alternateURLs`, and `port`; SIGTERM or SIGINT
 stops its own server and Codex child. No background login service is installed.
 
-`init`, `status`, and `pair` return JSON with `bridgeID`, `name`, `url`, `paired`,
+`init`, `status`, and `pair` return JSON with `bridgeID`, `name`, `url`, `alternateURLs`, `paired`,
 `profilePath`, `stateDir`, `projectsDir`, and `version`. `profile` returns only
 `profilePath`. `projects --json` returns `projects` with `id`, `name`, `threadID`,
 `status`, `updatedAt`, and local `path`, for the `/apk` skill's sidebar setup.
@@ -42,7 +42,8 @@ printed by these commands.
   "version": 1,
   "bridgeID": "UUID",
   "name": "APK Container Bridge",
-  "url": "https://Mac.local:48152",
+  "url": "https://192.168.1.20:48152",
+  "alternateURLs": ["https://Mac.local:48152"],
   "token": "64 lowercase hexadecimal characters",
   "certificateSHA256": "64 lowercase hexadecimal characters",
   "createdAt": "ISO8601 UTC timestamp"
@@ -54,6 +55,29 @@ pin that exact certificate, send `Authorization: Bearer TOKEN`, and refuse
 redirects. Profiles are bearer credentials and must be transferred privately.
 The API rejects browser `Origin` headers. The bridge does not expose arbitrary
 Codex methods, host filesystem browsing, or raw credentials.
+
+`alternateURLs` is optional, preserving compatibility with existing version 1
+profiles. The primary `url` and up to five alternatives are distinct HTTPS
+origins for the same bridge identity, token, and certificate pin. Clients must
+apply that pin to every origin and confirm `bridgeID` through `/v1/status`
+before selecting a connection. Probing alternatives must not replay POSTs;
+an interrupted write may already have reached the bridge.
+
+For a configured `.local` hostname, newly generated profiles put the current
+numeric Ethernet/Wi-Fi IPv4 address first and retain the hostname as an
+alternative. This also helps older clients that only understand `url`. A
+custom configured origin, including a VPN address, retains first priority.
+Automatic alternatives come only from usable `en*` IPv4 interfaces, excluding
+loopback and link-local addresses; VPN, AWDL, and virtual interfaces are not
+automatically advertised. At most six origins are returned in total.
+
+The stored configuration's `url` remains unchanged, as do the token,
+certificate, and bridge identity. Read-only `status` computes current addresses
+without rewriting `agent.prf`; explicit profile export refreshes its addresses
+after checkpointing the existing profile. An address change may therefore
+require exporting and importing a fresh profile if all saved choices stop
+working. By default the server listens on both IPv6 and IPv4 through a
+dual-stack socket, falling back to an IPv4 listener only when IPv6 is unavailable.
 
 ## HTTP
 
