@@ -27,18 +27,21 @@ struct BuildScreen: View {
                     }
                     Spacer(minLength: 8)
                     if bridge.profile != nil && !bridge.connected {
-                        Button { Task { await bridge.refresh() } } label: {
+                        Button { Task { await bridge.reconnect() } } label: {
                             if bridge.checkingConnection { ProgressView() }
                             else { Image(systemName: "arrow.clockwise") }
-                        }.buttonStyle(.bordered).disabled(bridge.checkingConnection || bridge.busy)
+                        }.buttonStyle(.bordered).disabled(!bridge.canReconnect)
                             .accessibilityLabel("Reconnect to Mac")
                     }
                     Button { bridge.newChat() } label: { Image(systemName: "plus").font(.title3) }
                         .buttonStyle(.bordered).accessibilityLabel("New app chat")
                     Menu {
                         Button { router.tab = .myApps } label: { Label("My Apps", systemImage: "square.stack.3d.up") }
-                        Button { Task { await bridge.refresh() } } label: { Label("Reconnect to Mac", systemImage: "arrow.clockwise") }
-                            .disabled(bridge.profile == nil || bridge.checkingConnection || bridge.busy)
+                        Button { Task { await bridge.reconnect() } } label: { Label("Reconnect to Mac", systemImage: "arrow.clockwise") }
+                            .disabled(!bridge.canReconnect)
+                        Button { BuildConnectionReport.copy(bridge.connectionDiagnostics) } label: {
+                            Label("Copy Connection Details", systemImage: "doc.on.doc")
+                        }.disabled(bridge.profile == nil)
                         Button { showSetup = true } label: { Label("Pairing setup", systemImage: "link") }
                         Button { showImporter = true } label: { Label("Import agent.prf", systemImage: "doc.badge.plus") }
                         if bridge.profile != nil { Button("Forget this Mac", role: .destructive) { showForget = true } }
@@ -70,7 +73,12 @@ struct BuildScreen: View {
                                 }
                                 if let error = project.error, !error.isEmpty { BuildErrorCard(text: error) }
                             }
-                            if let error = bridge.error { BuildErrorCard(text: error) }
+                            if let error = bridge.error {
+                                BuildErrorCard(text: error)
+                                if bridge.profile != nil {
+                                    Button("Connection Details") { showSetup = true }.buttonStyle(.bordered)
+                                }
+                            }
                             Color.clear.frame(height: 1).id("bottom")
                         }.padding(.horizontal, 18).padding(.bottom, 16)
                     }
@@ -351,11 +359,11 @@ private struct BridgeSetupSheet: View {
             if let address = bridge.connectedAddress {
                 Text("Connected through " + address).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
             }
-            Text("Keep the Mac bridge running and both devices on the same Wi-Fi or a reachable VPN. In Settings, allow Local Network for APK Container. If you run it inside LiveContainer, allow it for LiveContainer too.")
+            Text("Keep the Mac bridge running and both devices on the same Wi-Fi or a reachable VPN. Leave any VPN required by StikDebug or JIT enabled. In Settings, allow Local Network for APK Container—or LiveContainer when it hosts this app.")
                 .font(.callout).foregroundStyle(.secondary)
             HStack {
-                Button(bridge.checkingConnection ? "Connecting…" : "Reconnect") { Task { await bridge.refresh() } }
-                    .buttonStyle(.borderedProminent).disabled(bridge.checkingConnection || bridge.busy)
+                Button(bridge.checkingConnection ? "Restart Connection" : "Reconnect") { Task { await bridge.reconnect() } }
+                    .buttonStyle(.borderedProminent).disabled(!bridge.canReconnect)
                 Button("Open Settings") {
                     if let settings = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(settings) }
                 }.buttonStyle(.bordered)
@@ -368,8 +376,19 @@ private struct BridgeSetupSheet: View {
             Text("Copy the address shown in the Mac bridge if your network changed. Your saved pairing and certificate stay the same.")
                 .font(.caption).foregroundStyle(.secondary)
             Button("Use This Address") { Task { await bridge.updateAddress(macAddress) } }
-                .buttonStyle(.bordered).disabled(macAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || bridge.checkingConnection || bridge.busy)
+                .buttonStyle(.bordered).disabled(macAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !bridge.canReconnect)
             if let error = bridge.error { Text(error).font(.callout).foregroundStyle(.orange) }
+            DisclosureGroup("Connection Details") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(BuildConnectionReport.text(bridge.connectionDiagnostics))
+                        .font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button("Copy Connection Details") { BuildConnectionReport.copy(bridge.connectionDiagnostics) }
+                        .buttonStyle(.bordered)
+                    Text("Includes connection addresses and error codes. Your pairing token and app prompts are excluded.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }.padding(.top, 8)
+            }
         }.padding(18).background(Console.card, in: RoundedRectangle(cornerRadius: 20))
     }
     private func step(_ number: String, _ title: String, _ detail: String) -> some View {
@@ -378,4 +397,18 @@ private struct BridgeSetupSheet: View {
             VStack(alignment: .leading, spacing: 5) { Text(title).font(.headline); Text(detail).foregroundStyle(.secondary) }
         }
     }
+}
+
+private enum BuildConnectionReport {
+    static func text(_ details: String) -> String {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let version = info["CFBundleShortVersionString"] as? String ?? "unknown"
+        let build = info["CFBundleVersion"] as? String ?? "unknown"
+        let commit = info["HuskBuildCommit"] as? String ?? "unknown"
+        let host = getenv("LC_HOME_PATH") != nil ? "detected" : "not detected"
+        return "APK Container \(version) (\(build)), commit \(commit)\n"
+            + "System: \(ProcessInfo.processInfo.operatingSystemVersionString)\n"
+            + "LiveContainer: \(host)\n\n" + details
+    }
+    static func copy(_ details: String) { UIPasteboard.general.string = text(details) }
 }

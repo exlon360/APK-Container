@@ -34,7 +34,7 @@ async function start(kind, credentials = identity) {
       if (kind === 'good' && failPrimary) return json(503, { error: 'Primary no longer available' });
       return setTimeout(() => json(200, { bridgeID: 'fixture', paired: true }), kind === 'backup' ? 100 : 0);
     }
-    if (req.url === '/v1/fail') return json(503, { error: 'Fixture service is reachable but busy' });
+    if (req.url === '/v1/fail') return json(503, { error: 'Fixture service is reachable but busy; ' + token + '; private-server-response' });
     if (req.url === '/v1/redirect') { res.writeHead(302, { Location: redirectAddress + '/v1/redirect-target' }); return res.end(); }
     if (req.url === '/v1/drop-post') {
       req.resume(); req.on('end', () => { req.socket.destroy(); }); return;

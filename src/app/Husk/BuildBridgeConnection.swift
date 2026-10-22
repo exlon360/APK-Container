@@ -47,6 +47,73 @@ enum BuildConnectionFailure: LocalizedError {
     var needsPairing: Bool { if case .response(let status, _) = self { return status == 401 }; return false }
 }
 
+/// Only fixed operation names, origins, timings and numeric error codes belong
+/// in a report. Never retain response text, URL error userInfo, or credentials.
+private final class BuildConnectionDiagnostics: @unchecked Sendable {
+    private struct Entry {
+        let date: Date
+        let origin: String
+        let phase: String
+        let milliseconds: Int
+        let result: String
+    }
+    private let lock = NSLock()
+    private var entries: [Entry] = []
+    func record(origin: String, phase: String, started: Date, error: Error? = nil, status: Int? = nil) {
+        let result: String
+        if let error { result = Self.safeResult(error) }
+        else { result = status.map { "HTTP \($0)" } ?? "success" }
+        let entry = Entry(date: Date(), origin: origin, phase: phase,
+            milliseconds: max(0, Int(Date().timeIntervalSince(started) * 1000)), result: result)
+        lock.lock(); defer { lock.unlock() }
+        entries.append(entry)
+        if entries.count > 32 { entries.removeFirst(entries.count - 32) }
+    }
+    func report() -> String {
+        lock.lock(); let snapshot = entries; lock.unlock()
+        let formatter = ISO8601DateFormatter()
+        let lines = snapshot.map { entry in
+            "\(formatter.string(from: entry.date)) | \(entry.origin) | \(entry.phase) | \(entry.milliseconds) ms | \(entry.result)"
+        }
+        return (["Connection attempts (latest 32; UTC).", "Pairing credentials, prompts and response text are excluded."]
+            + (lines.isEmpty ? ["No connection attempt has completed."] : lines)).joined(separator: "\n")
+    }
+    static func safeResult(_ error: Error) -> String {
+        if let failure = error as? BuildConnectionFailure {
+            switch failure {
+            case .response(let status, _): return "HTTP \(status)"
+            case .invalid: return "invalid_bridge_response"
+            // Recording happens before describe() maps ordinary URL errors.
+            // classify() emits this case only for the exact-certificate rejection.
+            case .unreachable: return "secure_identity_rejected"
+            }
+        }
+        if error is CancellationError { return "cancelled" }
+        let ns = error as NSError
+        let result: String
+        switch (error as? URLError)?.code {
+        case .timedOut: result = "timed_out"
+        case .cannotFindHost, .dnsLookupFailed: result = "hostname_not_resolved"
+        case .cannotConnectToHost: result = "connection_not_opened"
+        case .notConnectedToInternet: result = "network_path_unavailable"
+        case .networkConnectionLost: result = "connection_lost"
+        case .cancelled: result = "cancelled"
+        default: result = "request_failed"
+        }
+        // Errors can carry URLs, headers and arbitrary localized descriptions.
+        // Inspect only the nested numeric codes, with a fixed domain allowlist.
+        let knownDomains = Set([NSURLErrorDomain, NSPOSIXErrorDomain, NSOSStatusErrorDomain, "kCFErrorDomainCFNetwork"])
+        var codes: [String] = [], next: NSError? = ns
+        for _ in 0..<4 {
+            guard let current = next else { break }
+            let domain = knownDomains.contains(current.domain) ? current.domain : "OtherError"
+            codes.append("\(domain)=\(current.code)")
+            next = current.userInfo[NSUnderlyingErrorKey] as? NSError
+        }
+        return result + " (" + codes.joined(separator: ", ") + ")"
+    }
+}
+
 /// Pins a short list of explicit addresses, remembers the working route, and
 /// retries reads only. A timed-out mutation may already have reached the Mac.
 actor BuildBridgeConnection {
@@ -71,6 +138,7 @@ actor BuildBridgeConnection {
     private var connectionTask: Probe?
     private var latestProbeID: UUID?
     private var closed = false
+    private let diagnostics = BuildConnectionDiagnostics()
 
     init(profile: AgentProfile, probeSeconds: Double = 5) {
         self.profile = profile; self.probeSeconds = probeSeconds
@@ -90,17 +158,19 @@ actor BuildBridgeConnection {
         for route in routes.values { route.session.invalidateAndCancel() }
     }
     func activeAddress() -> String? { selectedOrigin }
+    func diagnosticReport() -> String { diagnostics.report() }
 
     func connect() async throws -> Status {
         guard !closed else { throw CancellationError() }
         let probe: Probe
         if let existing = connectionTask { probe = existing }
         else {
-            let profile = self.profile, routes = self.routes, duration = probeSeconds
+            let profile = self.profile, routes = self.routes, duration = probeSeconds, diagnostics = self.diagnostics
             let task = Task<Reachable, Error> {
                 let result = await withTaskGroup(of: ProbeResult.self) { group in
                     for origin in profile.origins {
                         group.addTask {
+                            let started = Date()
                             do {
                                 let bytes = try await Self.withDeadline(seconds: duration) {
                                     try await Self.read(profile: profile, route: routes[origin]!, origin: origin,
@@ -112,8 +182,12 @@ actor BuildBridgeConnection {
                                 guard status.bridgeID == profile.bridgeID else {
                                     throw BuildConnectionFailure.invalid("This address belongs to a different Mac bridge. Import the correct agent.prf.")
                                 }
+                                diagnostics.record(origin: origin, phase: "status probe", started: started, status: 200)
                                 return .ready(Reachable(status: status, origin: origin))
-                            } catch { return .failed(error) }
+                            } catch {
+                                diagnostics.record(origin: origin, phase: "status probe", started: started, error: error)
+                                return .failed(error)
+                            }
                         }
                     }
                     var failures: [Error] = []
@@ -163,8 +237,16 @@ actor BuildBridgeConnection {
     private func execute(_ path: String, method: String, body: Data?, origin: String) async throws -> Data {
         let profile = self.profile, route = routes[origin]!
         let duration: Double = method == "GET" ? 12 : 600
-        return try await Self.withDeadline(seconds: duration) {
-            try await Self.read(profile: profile, route: route, origin: origin, path: path, method: method, body: body, timeout: duration)
+        let started = Date(), phase = method == "GET" ? "read request" : "build action"
+        do {
+            let data = try await Self.withDeadline(seconds: duration) {
+                try await Self.read(profile: profile, route: route, origin: origin, path: path, method: method, body: body, timeout: duration)
+            }
+            diagnostics.record(origin: origin, phase: phase, started: started)
+            return data
+        } catch {
+            diagnostics.record(origin: origin, phase: phase, started: started, error: error)
+            throw error
         }
     }
     func download(_ path: String) async throws -> (URL, URLResponse) {
@@ -174,8 +256,16 @@ actor BuildBridgeConnection {
         request.timeoutInterval = 60
         request.setValue("Bearer " + profile.token, forHTTPHeaderField: "Authorization")
         let route = routes[origin]!, rejections = routes[origin]!.trust.identityRejections
-        do { return try await route.session.download(for: request) }
-        catch { throw Self.describe(Self.classify(error, route: route, previousRejections: rejections)) }
+        let started = Date()
+        do {
+            let result = try await route.session.download(for: request)
+            diagnostics.record(origin: origin, phase: "APK download", started: started, status: (result.1 as? HTTPURLResponse)?.statusCode)
+            return result
+        } catch {
+            let classified = Self.classify(error, route: route, previousRejections: rejections)
+            diagnostics.record(origin: origin, phase: "APK download", started: started, error: classified)
+            throw Self.describe(classified)
+        }
     }
     private static func read(profile: AgentProfile, route: Route, origin: String,
                              path: String, method: String, body: Data?, timeout: Double) async throws -> Data {
@@ -231,8 +321,18 @@ actor BuildBridgeConnection {
         case .serverCertificateUntrusted, .serverCertificateHasBadDate, .serverCertificateHasUnknownRoot,
              .serverCertificateNotYetValid, .secureConnectionFailed, .clientCertificateRejected, .userAuthenticationRequired:
             return BuildConnectionFailure.unreachable("The Mac's secure identity could not be verified. Import agent.prf from the running bridge; its certificate must match.")
+        case .timedOut:
+            return BuildConnectionFailure.unreachable("The Mac didn't answer before the connection timed out. Check Local Network access for APK Container—or LiveContainer if it hosts the app—and the Mac address. Keep the StikDebug/JIT VPN on. Copy Connection Details if it continues.")
+        case .cannotFindHost, .dnsLookupFailed:
+            return BuildConnectionFailure.unreachable("The Mac hostname couldn't be resolved (\(urlError.code.rawValue)). Use the numeric address shown in APK Container Bridge, then reconnect. Keep the StikDebug/JIT VPN on.")
+        case .cannotConnectToHost:
+            return BuildConnectionFailure.unreachable("A connection to the Mac address couldn't be opened (\(urlError.code.rawValue)). Check that the bridge is running and its displayed address matches. Copy Connection Details if it continues.")
+        case .notConnectedToInternet:
+            return BuildConnectionFailure.unreachable("The device reports no usable network path (\(urlError.code.rawValue)). Check Wi-Fi and Local Network access for APK Container—or LiveContainer if it hosts the app. Keep the StikDebug/JIT VPN on.")
+        case .networkConnectionLost:
+            return BuildConnectionFailure.unreachable("The connection to the Mac was interrupted (\(urlError.code.rawValue)). Tap Reconnect. Check My Apps before resending a build request; it may already have reached the Mac.")
         default:
-            return BuildConnectionFailure.unreachable("Couldn't reach the Mac. Keep APK Container Bridge running on the same Wi-Fi or a reachable VPN. Allow Local Network access for APK Container—or LiveContainer if it hosts this app. Use the Mac address shown in the bridge, or import a newly generated agent.prf.")
+            return BuildConnectionFailure.unreachable("The Mac connection failed (NSURLErrorDomain \(urlError.code.rawValue)). Keep your StikDebug/JIT VPN on and copy Connection Details so the actual failure can be checked.")
         }
     }
 }

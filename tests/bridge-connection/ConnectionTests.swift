@@ -43,6 +43,9 @@ import Foundation
         do { _ = try await denied.connect(); preconditionFailure("Accepted expired pairing") }
         catch let failure as BuildConnectionFailure { precondition(failure.needsPairing && !failure.isTransportFailure) }
         await denied.close()
+        let deniedDetails = await denied.diagnosticReport()
+        precondition(deniedDetails.contains(fixture.addresses["slow"]!) && deniedDetails.contains(fixture.addresses["unauthorized"]!))
+        precondition(deniedDetails.contains("HTTP 401") && deniedDetails.contains("NSURLErrorDomain=-1001"), "Lost an alternate origin's failure evidence")
         print("PASS pairing response survives alternate timeout")
 
         let timeout = BuildBridgeConnection(profile: try profile(["slow"]), probeSeconds: 0.4)
@@ -53,6 +56,8 @@ import Foundation
             precondition(failure.localizedDescription.contains("Local Network"))
         }
         await timeout.close()
+        let timeoutDetails = await timeout.diagnosticReport()
+        precondition(timeoutDetails.contains("timed_out (NSURLErrorDomain=-1001)") && timeoutDetails.contains("status probe"))
         print("PASS bounded timeout supplies network and permission actions")
 
         for kind in ["wrongPin", "invalid", "wrongID"] {
@@ -63,12 +68,14 @@ import Foundation
                 else { precondition(!failure.isTransportFailure) }
             }
             await rejected.close()
+            let rejectedDetails = await rejected.diagnosticReport()
+            precondition(rejectedDetails.contains(kind == "wrongPin" ? "secure_identity_rejected" : "invalid_bridge_response"))
         }
         print("PASS wrong certificate, unreadable status, and wrong bridge identity rejected")
 
         do { _ = try await connection.request("/v1/redirect"); preconditionFailure("Followed redirect") }
         catch let failure as BuildConnectionFailure { if case .response(302, _) = failure {} else { preconditionFailure("Unexpected redirect failure") } }
-        do { _ = try await connection.request("/v1/drop-post", method: "POST", body: Data("{}".utf8)); preconditionFailure("Dropped POST succeeded") }
+        do { _ = try await connection.request("/v1/drop-post", method: "POST", body: Data("{\"text\":\"private-user-prompt\"}".utf8)); preconditionFailure("Dropped POST succeeded") }
         catch let failure as BuildConnectionFailure { precondition(failure.isTransportFailure) }
         let countData = try await connection.request("/v1/counts")
         let counts = try JSONSerialization.jsonObject(with: countData) as! [String: [String: Int]]
@@ -76,7 +83,21 @@ import Foundation
         precondition(counts["good"]?["/v1/drop-post"] == 1, "A mutation was replayed")
         precondition(counts["wrongPin"] == nil, "Authorization reached the wrong certificate")
         precondition(counts["redirectTarget"] == nil, "Authorization reached a redirect target")
+        let details = await connection.diagnosticReport()
+        for privateValue in [fixture.token, fixture.pin, "private-server-response", "private-user-prompt", "/v1/"] {
+            precondition(!details.contains(privateValue), "Connection report exposed private request or response information")
+        }
+        precondition(details.contains("HTTP 503") && details.contains("build action"))
         print("PASS no POST replay, pin credential leak, or redirect credential leak")
+
+        let dnsFailure = BuildBridgeConnection.describe(URLError(.cannotFindHost)).localizedDescription
+        let pathFailure = BuildBridgeConnection.describe(URLError(.notConnectedToInternet)).localizedDescription
+        let refusedFailure = BuildBridgeConnection.describe(URLError(.cannotConnectToHost)).localizedDescription
+        precondition(dnsFailure.contains("hostname") && dnsFailure.contains("-1003"))
+        precondition(pathFailure.contains("network path") && pathFailure.contains("-1009"))
+        precondition(refusedFailure.contains("connection") && refusedFailure.contains("-1004"))
+        precondition(pathFailure.contains("VPN on"))
+        print("PASS connection evidence is sanitized and DNS/path/connection failures remain distinct")
 
         let reroute = BuildBridgeConnection(profile: try profile(["good", "backup"]), probeSeconds: 1)
         _ = try await reroute.connect()

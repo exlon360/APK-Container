@@ -14,8 +14,11 @@ final class BuildBridgeStore: ObservableObject {
     @Published private(set) var paired = false
     @Published private(set) var checkingConnection = false
     @Published private(set) var connectedAddress: String?
+    @Published private(set) var connectionDiagnostics = "No connection test yet."
     @Published private(set) var busy = false
     @Published private(set) var downloading: String?
+    @Published private var reconnecting = false
+    @Published private var mutationCount = 0
     @Published var error: String?
     @Published var draft = ""
     private var connection: BuildBridgeConnection?
@@ -24,10 +27,12 @@ final class BuildBridgeStore: ObservableObject {
     private var profileGeneration = UUID()
     private var lastRefresh = Date.distantPast
     private static let service = "com.apkcontainer.build-bridge"
-    private static let cacheURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    private let cacheURL: URL
+    private static let defaultCacheURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("apk-builder-projects.json")
 
     var selected: BuildProject? { projects.first { $0.id == selectedID } }
+    var canReconnect: Bool { profile != nil && !busy && downloading == nil && mutationCount == 0 && !reconnecting }
     var connectionLabel: String {
         guard profile != nil else { return "Connect your Mac" }
         if !connected { return checkingConnection ? "Connecting…" : "Connection issue" }
@@ -35,6 +40,7 @@ final class BuildBridgeStore: ObservableObject {
     }
 
     private init() {
+        cacheURL = Self.defaultCacheURL
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service, kSecAttrAccount as String: "profile",
             kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
@@ -42,15 +48,21 @@ final class BuildBridgeStore: ObservableObject {
         if SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
            let data = result as? Data, let saved = try? AgentProfile.read(data) {
             profile = saved
-            if let bytes = try? Data(contentsOf: Self.cacheURL), let cache = try? JSONDecoder().decode(Cache.self, from: bytes),
+            if let bytes = try? Data(contentsOf: cacheURL), let cache = try? JSONDecoder().decode(Cache.self, from: bytes),
                cache.bridgeID == saved.bridgeID { projects = cache.projects }
         }
     }
+    #if BUILD_BRIDGE_TESTS
+    /// Isolated integration tests inject credentials and cache paths; no Keychain access.
+    init(testProfile: AgentProfile, cacheURL: URL) {
+        self.cacheURL = cacheURL; profile = testProfile
+    }
+    #endif
     private struct Cache: Codable { let bridgeID: String; let projects: [BuildProject] }
     private func saveCache() {
         guard let profile, let data = try? JSONEncoder().encode(Cache(bridgeID: profile.bridgeID, projects: projects)) else { return }
-        try? FileManager.default.createDirectory(at: Self.cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: Self.cacheURL, options: [.atomic, .completeFileProtectionUnlessOpen])
+        try? FileManager.default.createDirectory(at: cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: cacheURL, options: [.atomic, .completeFileProtectionUnlessOpen])
     }
     func importProfile(_ url: URL) {
         let scoped = url.startAccessingSecurityScopedResource()
@@ -75,15 +87,29 @@ final class BuildBridgeStore: ObservableObject {
         profile = value; error = nil; saveCache()
     }
     func updateAddress(_ address: String) async {
-        guard let profile, !busy else { return }
+        guard let profile, canReconnect else { return }
         do { try saveProfile(profile.replacingAddress(address)); await refresh() }
         catch { report(error) }
     }
     private func resetConnection() {
+        if let previous = invalidateConnection() { Task { await previous.close() } }
+    }
+    private func invalidateConnection() -> BuildBridgeConnection? {
         profileGeneration = UUID()
-        if let connection { Task { await connection.close() } }
+        let previous = connection
         connection = nil; connected = false; paired = false; connectedAddress = nil
         checkingConnection = false; refreshID = nil; pollID = nil; lastRefresh = .distantPast
+        return previous
+    }
+    /// An explicit retry replaces a stalled URLSession and cancels old reads.
+    /// Never cancel a send, approval, interrupt, or APK download to reconnect.
+    func reconnect() async {
+        guard canReconnect else { return }
+        reconnecting = true
+        defer { reconnecting = false }
+        let previous = invalidateConnection()
+        if let previous { await previous.close() }
+        await performRefresh()
     }
     func forgetMac() {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
@@ -91,8 +117,9 @@ final class BuildBridgeStore: ObservableObject {
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else { error = "Couldn't remove the saved pairing."; return }
         resetConnection(); profile = nil; error = nil
+        connectionDiagnostics = "No connection test yet."
         projects = []; selectedID = nil; draft = ""
-        try? FileManager.default.removeItem(at: Self.cacheURL)
+        try? FileManager.default.removeItem(at: cacheURL)
     }
     private func transport(_ profile: AgentProfile) -> BuildBridgeConnection {
         if let connection { return connection }
@@ -104,12 +131,24 @@ final class BuildBridgeStore: ObservableObject {
         guard let profile else { throw BuildBridgeError.message("Import agent.prf to connect your Mac.") }
         let generation = profileGeneration
         let bytes = try body.map { try JSONSerialization.data(withJSONObject: $0) }
+        let usedTransport = transport(profile)
+        let mutating = method != "GET"
+        if mutating { mutationCount += 1 }
+        defer { if mutating { mutationCount -= 1 } }
         do {
-            let data = try await transport(profile).request(path, method: method, body: bytes)
+            let data = try await usedTransport.request(path, method: method, body: bytes)
             guard profileGeneration == generation else { throw CancellationError() }
+            if mutating {
+                await captureDiagnostics(usedTransport, generation: generation)
+                guard profileGeneration == generation else { throw CancellationError() }
+            }
             return data
         } catch {
             if profileGeneration != generation || Self.isCancellation(error) { throw CancellationError() }
+            if mutating {
+                await captureDiagnostics(usedTransport, generation: generation)
+                guard profileGeneration == generation else { throw CancellationError() }
+            }
             throw error
         }
     }
@@ -128,18 +167,28 @@ final class BuildBridgeStore: ObservableObject {
     private struct Projects: Decodable { let projects: [BuildProject] }
     private struct Project: Decodable { let project: BuildProject }
     func refresh() async {
-        guard let profile, !busy, refreshID == nil, pollID == nil else { return }
+        guard !reconnecting else { return }
+        await performRefresh()
+    }
+    private func captureDiagnostics(_ transport: BuildBridgeConnection, generation: UUID) async {
+        let report = await transport.diagnosticReport()
+        guard profileGeneration == generation else { return }
+        connectionDiagnostics = report
+    }
+    private func performRefresh() async {
+        guard let profile, !busy, mutationCount == 0, refreshID == nil, pollID == nil else { return }
         let id = UUID(), generation = profileGeneration
+        let transport = transport(profile)
         refreshID = id; checkingConnection = true; lastRefresh = Date()
         defer { if refreshID == id { refreshID = nil; checkingConnection = false } }
         do {
-            let transport = transport(profile)
             let status = try await transport.connect()
             guard profileGeneration == generation else { throw CancellationError() }
             let address = await transport.activeAddress()
             guard profileGeneration == generation else { throw CancellationError() }
             connected = true; paired = status.paired; connectedAddress = address
             let listed = try JSONDecoder().decode(Projects.self, from: await request("/v1/projects")).projects
+            guard profileGeneration == generation else { throw CancellationError() }
             projects = listed.map { compact in
                 guard let cached = projects.first(where: { $0.id == compact.id }) else { return compact }
                 if cached.updatedAt > compact.updatedAt { return cached }
@@ -148,32 +197,37 @@ final class BuildBridgeStore: ObservableObject {
                 return value
             }.sorted { $0.updatedAt > $1.updatedAt }
             if let id = selectedID, projects.contains(where: { $0.id == id }) {
-                upsert(try JSONDecoder().decode(Project.self, from: await request("/v1/projects/" + id)).project)
+                let project = try JSONDecoder().decode(Project.self, from: await request("/v1/projects/" + id)).project
+                guard profileGeneration == generation else { throw CancellationError() }
+                upsert(project)
             }
             error = nil; saveCache()
         } catch {
             if profileGeneration == generation { report(error) }
         }
+        await captureDiagnostics(transport, generation: generation)
     }
     func poll() async {
-        guard !busy, refreshID == nil, pollID == nil else { return }
+        guard !reconnecting, !busy, mutationCount == 0, refreshID == nil, pollID == nil else { return }
         if selected?.isActive != true || !connected {
             if Date().timeIntervalSince(lastRefresh) > 8 { await refresh() }
             return
         }
-        guard let projectID = selectedID else { return }
+        guard let projectID = selectedID, let profile else { return }
         let id = UUID(), generation = profileGeneration
+        let transport = transport(profile)
         pollID = id
         defer { if pollID == id { pollID = nil } }
         do {
-            upsert(try JSONDecoder().decode(Project.self, from: await request("/v1/projects/" + projectID)).project)
-            connected = true; error = nil
-            let address = await connection?.activeAddress()
+            let project = try JSONDecoder().decode(Project.self, from: await request("/v1/projects/" + projectID)).project
             guard profileGeneration == generation else { throw CancellationError() }
-            connectedAddress = address
+            let address = await transport.activeAddress()
+            guard profileGeneration == generation else { throw CancellationError() }
+            upsert(project); connected = true; error = nil; connectedAddress = address
         } catch {
             if profileGeneration == generation { report(error) }
         }
+        await captureDiagnostics(transport, generation: generation)
     }
     private func upsert(_ project: BuildProject) {
         if let cached = projects.first(where: { $0.id == project.id }), cached.updatedAt > project.updatedAt { return }
@@ -225,6 +279,7 @@ final class BuildBridgeStore: ObservableObject {
     func install(_ artifact: BuildArtifact, project: BuildProject) async {
         guard let profile, downloading == nil else { return }
         let generation = profileGeneration
+        let usedTransport = transport(profile)
         downloading = artifact.id; error = nil
         defer { downloading = nil }
         do {
@@ -233,7 +288,7 @@ final class BuildBridgeStore: ObservableObject {
                   artifact.downloadPath == "/v1/projects/\(project.id)/artifacts/\(artifact.id)" else {
                 throw BuildBridgeError.message("The Mac sent invalid APK metadata.")
             }
-            let (file, response) = try await transport(profile).download(artifact.downloadPath)
+            let (file, response) = try await usedTransport.download(artifact.downloadPath)
             guard profileGeneration == generation else {
                 try? FileManager.default.removeItem(at: file)
                 throw CancellationError()
@@ -263,5 +318,6 @@ final class BuildBridgeStore: ObservableObject {
         } catch {
             if profileGeneration == generation { report(error) }
         }
+        await captureDiagnostics(usedTransport, generation: generation)
     }
 }
