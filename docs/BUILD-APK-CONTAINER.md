@@ -61,6 +61,9 @@ These regression checks run without a connected device:
 
 ```sh
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+sh tests/build-bridge/run.sh
+sh tests/repositories/run.sh
+node --test tests/bridge/*.test.mjs
 sh tests/display-resolution/run.sh
 sh tests/runtime-display/run.sh
 sh tests/runtime-density/run.sh
@@ -80,6 +83,10 @@ The policy-epoch tests execute the production shell command against controlled s
 Package-state parsing accepts the extra bare `User 0:` headings emitted by Android's shared-user permission dump, while requiring exactly one unambiguous package-state row and one valid `enabled=` field. Regression fixtures include the reported DeviceLockController output, an already-disabled HOME component, and launcher disable/readback with those headings.
 
 Before changing guest launcher or status-bar policy, the runtime writes and reads back a private restore journal under its application-support `app-only-restore` directory, keyed to the guest disk. It retains original package states and explicit restoration commands. It never automatically restores older state or deletes installed app data. Keep that journal with a complete device backup when replacing or moving the app container.
+
+## Mac build companion
+
+See [APK-BUILDER.md](APK-BUILDER.md) for the paired build workflow, companion packaging, `/apk` skill, and repository feeds. The bundled standalone Node runtime makes the current companion Apple Silicon/macOS 13.5+ only.
 
 ## Building the runtime from source
 

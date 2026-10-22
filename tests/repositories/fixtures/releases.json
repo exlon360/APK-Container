@@ -1,0 +1,610 @@
+{
+  "https://api.github.com/repos/TeamNewPipe/NewPipe/releases/latest": {
+    "tag_name": "v0.29.1",
+    "html_url": "https://github.com/TeamNewPipe/NewPipe/releases/tag/v0.29.1",
+    "body": "This is a hotfix release that fixes media.ccc.de live streams. Happy hacking!",
+    "draft": false,
+    "prerelease": false,
+    "assets": [
+      {
+        "name": "NewPipe_v0.29.1.apk",
+        "browser_download_url": "https://github.com/TeamNewPipe/NewPipe/releases/download/v0.29.1/NewPipe_v0.29.1.apk",
+        "size": 11507122,
+        "digest": "sha256:18447bfb1e06d113edc88df93f471827280de06f6f3d4dc42f56f28b9c1bab79",
+        "state": "uploaded"
+      }
+    ]
+  },
+  "https://api.github.com/repos/beemdevelopment/Aegis/releases/latest": {
+    "tag_name": "v3.4.3",
+    "html_url": "https://github.com/beemdevelopment/Aegis/releases/tag/v3.4.3",
+    "body": "## New features\r\n\r\n* Support for importing encrypted Proton Authenticator exports\r\n\r\n## Fixed bugs\r\n\r\n* A maliciously crafted icon pack could overwrite Aegis' internal files if imported, including the vault file (thanks @GICodeWarrior for reporting this issue)\r\n",
+    "draft": false,
+    "prerelease": false,
+    "assets": [
+      {
+        "name": "aegis-v3.4.3.apk",
+        "browser_download_url": "https://github.com/beemdevelopment/Aegis/releases/download/v3.4.3/aegis-v3.4.3.apk",
+        "size": 6881897,
+        "digest": "sha256:fa091c91912c0d56ec3553394fac4158f9a9d178e93bcbb35419601d788cb528",
+        "state": "uploaded"
+      }
+    ]
+  },
+  "https://api.github.com/repos/tasks/tasks/releases/latest": {
+    "tag_name": "15.13",
+    "html_url": "https://github.com/tasks/tasks/releases/tag/15.13",
+    "body": "## What's Changed\n* Translations update from Hosted Weblate by @weblate in https://github.com/tasks/tasks/pull/4662\n* Translations update from Hosted Weblate by @weblate in https://github.com/tasks/tasks/pull/4669\n* Translations update from Hosted Weblate by @weblate in https://github.com/tasks/tasks/pull/4673\n* Translations update from Hosted Weblate by @weblate in https://github.com/tasks/tasks/pull/4666\n* Fixed: \"Clear completed\" option now uses sentence case by @joshuagrady in https://github.com/tasks/tasks/pull/4214\n* Translations update from Hosted Weblate by @weblate in https://github.com/tasks/tasks/pull/4685\n* Translations update from Hosted Weblate by @weblate in https://github.com/tasks/tasks/pull/4688\n* Translations update from Hosted Weblate by @weblate in https://github.com/tasks/tasks/pull/4676\n* Translations update from Hosted Weblate by @weblate in https://github.com/tasks/tasks/pull/4692\n* Translations update from Hosted Weblate by @weblate in https://github.com/tasks/tasks/pull/4691\n* Bump rubyzip from 2.4.1 to 3.4.0 by @dependabot[bot] in https://github.com/tasks/tasks/pull/4696\n* Translations update from Hosted Weblate by @weblate in https://github.com/tasks/tasks/pull/4697\n* Translations update from Hosted Weblate by @weblate in https://github.com/tasks/tasks/pull/4698\n* Translations update from Hosted Weblate by @weblate in https://github.com/tasks/tasks/pull/4700\n* Translations update from Hosted Weblate by @weblate in https://github.com/tasks/tasks/pull/4703\n* Translations update from Hosted Weblate by @weblate in https://github.com/tasks/tasks/pull/4704\n* Translations update from Hosted Weblate by @weblate in https://github.com/tasks/tasks/pull/4708\n* Translations update from Hosted Weblate by @weblate in https://github.com/tasks/tasks/pull/4709\n* Translations update from Hosted Weblate by @weblate in https://github.com/tasks/tasks/pull/4711\n* Translations update from Hosted Weblate by @weblate in https://github.com/tasks/tasks/pull/4716\n* Translations update from Hosted Weblate by @weblate in https://github.com/tasks/tasks/pull/4715\n* Translations update from Hosted Weblate by @weblate in https://github.com/tasks/tasks/pull/4722\n* Translations update from Hosted Weblate by @weblate in https://github.com/tasks/tasks/pull/4726\n* Translations update from Hosted Weblate by @weblate in https://github.com/tasks/tasks/pull/4727\n* Translations update from Hosted Weblate by @weblate in https://github.com/tasks/tasks/pull/4729\n* Translations update from Hosted Weblate by @weblate in https://github.com/tasks/tasks/pull/4730\n\n## New Contributors\n* @joshuagrady made their first contribution in https://github.com/tasks/tasks/pull/4214\n\n**Full Changelog**: https://github.com/tasks/tasks/compare/15.12...15.13",
+    "draft": false,
+    "prerelease": false,
+    "assets": [
+      {
+        "name": "appcast-aarch64.rss",
+        "browser_download_url": "https://github.com/tasks/tasks/releases/download/15.13/appcast-aarch64.rss",
+        "size": 1678,
+        "digest": "sha256:5c348fd3f0cd72e9b63136d4ca6e6fa35992b9af57067ed7572fc289ca85eaf1",
+        "state": "uploaded"
+      },
+      {
+        "name": "appcast-amd64.rss",
+        "browser_download_url": "https://github.com/tasks/tasks/releases/download/15.13/appcast-amd64.rss",
+        "size": 1672,
+        "digest": "sha256:6ee8f414b059e0fb021a19b2046a77dab223151effd21a69585f4822ee922ed0",
+        "state": "uploaded"
+      },
+      {
+        "name": "download.html",
+        "browser_download_url": "https://github.com/tasks/tasks/releases/download/15.13/download.html",
+        "size": 47940,
+        "digest": "sha256:9ade67b6b7219ef509ac3c8cc6789e69439dae201a8aaa8db7115f89d3ac8232",
+        "state": "uploaded"
+      },
+      {
+        "name": "icon.png",
+        "browser_download_url": "https://github.com/tasks/tasks/releases/download/15.13/icon.png",
+        "size": 2101,
+        "digest": "sha256:111574325915552e2d266170d2f7e7ba9f2d4c46ef5f760d0434704f61ef8963",
+        "state": "uploaded"
+      },
+      {
+        "name": "InRelease",
+        "browser_download_url": "https://github.com/tasks/tasks/releases/download/15.13/InRelease",
+        "size": 1223,
+        "digest": "sha256:4f3d61964b9a63ac20572168e85f9a8f1f366f37598dd1dde6d90f831fecf17c",
+        "state": "uploaded"
+      },
+      {
+        "name": "mapping-googleplay-15.13-0191a098f17c.txt.gz",
+        "browser_download_url": "https://github.com/tasks/tasks/releases/download/15.13/mapping-googleplay-15.13-0191a098f17c.txt.gz",
+        "size": 11134212,
+        "digest": "sha256:d022ff701d116a1432b7022110872277989d87055a433a8a40955f5dde3cd971",
+        "state": "uploaded"
+      },
+      {
+        "name": "mapping-wear-15.13-25d45afc3a17.txt.gz",
+        "browser_download_url": "https://github.com/tasks/tasks/releases/download/15.13/mapping-wear-15.13-25d45afc3a17.txt.gz",
+        "size": 3983864,
+        "digest": "sha256:d21e6f154deec8b4342733cbbef7f6c4ec5abfdcbee19ced80aab1657e9f981f",
+        "state": "uploaded"
+      },
+      {
+        "name": "metadata.properties",
+        "browser_download_url": "https://github.com/tasks/tasks/releases/download/15.13/metadata.properties",
+        "size": 1345,
+        "digest": "sha256:621c4313d378f1b9a9fa2bd9d749fe64a8f1a1f50c369529e892f6ed779bddfd",
+        "state": "uploaded"
+      },
+      {
+        "name": "Packages",
+        "browser_download_url": "https://github.com/tasks/tasks/releases/download/15.13/Packages",
+        "size": 1369,
+        "digest": "sha256:b36886eb573fbcfd7154436e198c8c72bfa1a6a543894ac7f3c190ea6e8d1f94",
+        "state": "uploaded"
+      },
+      {
+        "name": "Packages.xz",
+        "browser_download_url": "https://github.com/tasks/tasks/releases/download/15.13/Packages.xz",
+        "size": 572,
+        "digest": "sha256:a8c8fc96a8bc3df132f3817eedfc2aa4998881a4a369197b673c082fa1bcb704",
+        "state": "uploaded"
+      },
+      {
+        "name": "Release",
+        "browser_download_url": "https://github.com/tasks/tasks/releases/download/15.13/Release",
+        "size": 956,
+        "digest": "sha256:c866942dbe32efc69bbf172a1ee39ef2ea7c4cfcbf1c498042d5c3583b4ccfcf",
+        "state": "uploaded"
+      },
+      {
+        "name": "tasks-fdroid-15.13.apk",
+        "browser_download_url": "https://github.com/tasks/tasks/releases/download/15.13/tasks-fdroid-15.13.apk",
+        "size": 24729585,
+        "digest": "sha256:7df9620d84a824a834598843f954943009012d75fbb16572e5ec88a414a576b9",
+        "state": "uploaded"
+      },
+      {
+        "name": "tasks-googleplay-15.13.apk",
+        "browser_download_url": "https://github.com/tasks/tasks/releases/download/15.13/tasks-googleplay-15.13.apk",
+        "size": 26742390,
+        "digest": "sha256:f358bb88de77e606dc08bd0fcbdb836ef4b5acfc83884af3c5968e8f34899d2a",
+        "state": "uploaded"
+      },
+      {
+        "name": "tasks-org-15.12-15.13.0-mac-aarch64.delta",
+        "browser_download_url": "https://github.com/tasks/tasks/releases/download/15.13/tasks-org-15.12-15.13.0-mac-aarch64.delta",
+        "size": 30342638,
+        "digest": "sha256:ac558c88355b05819b6bcc896be33df78a5e633ca67427d485570b569aeb70b4",
+        "state": "uploaded"
+      },
+      {
+        "name": "tasks-org-15.12-15.13.0-mac-amd64.delta",
+        "browser_download_url": "https://github.com/tasks/tasks/releases/download/15.13/tasks-org-15.12-15.13.0-mac-amd64.delta",
+        "size": 33954686,
+        "digest": "sha256:e57e5872d1dc23093b4d8c31cff809d664d76d961b9cf5d0ed96e0521ab581b7",
+        "state": "uploaded"
+      },
+      {
+        "name": "tasks-org-15.13.0-linux-aarch64.tar.gz",
+        "browser_download_url": "https://github.com/tasks/tasks/releases/download/15.13/tasks-org-15.13.0-linux-aarch64.tar.gz",
+        "size": 131148188,
+        "digest": "sha256:19d13379f9d8abf659ec1994d21998f95f2a60e51b6095c08ce0cde8c2ab3557",
+        "state": "uploaded"
+      },
+      {
+        "name": "tasks-org-15.13.0-linux-amd64.tar.gz",
+        "browser_download_url": "https://github.com/tasks/tasks/releases/download/15.13/tasks-org-15.13.0-linux-amd64.tar.gz",
+        "size": 132366470,
+        "digest": "sha256:dfb4bcf8e8371419d092348bbe33e3785b6345c497d53943da16eba00fe16cc8",
+        "state": "uploaded"
+      },
+      {
+        "name": "tasks-org-15.13.0-mac-aarch64.zip",
+        "browser_download_url": "https://github.com/tasks/tasks/releases/download/15.13/tasks-org-15.13.0-mac-aarch64.zip",
+        "size": 125033524,
+        "digest": "sha256:01c8a9bfd6dbdb9d5230a4fd24fc99510766ffec8e4f5fd34b25a7669f310570",
+        "state": "uploaded"
+      },
+      {
+        "name": "tasks-org-15.13.0-mac-amd64.zip",
+        "browser_download_url": "https://github.com/tasks/tasks/releases/download/15.13/tasks-org-15.13.0-mac-amd64.zip",
+        "size": 126905543,
+        "digest": "sha256:bac258f3154902798ecc420fc47e0c6f5e7ebcfecdd8a29b13418c3151eed699",
+        "state": "uploaded"
+      },
+      {
+        "name": "tasks-org-15.13.0-windows-aarch64.zip",
+        "browser_download_url": "https://github.com/tasks/tasks/releases/download/15.13/tasks-org-15.13.0-windows-aarch64.zip",
+        "size": 122668273,
+        "digest": "sha256:b2e92e9286f0f9de54e87caa8e9ff8f5a93bfb77083138080b4714e2ee187708",
+        "state": "uploaded"
+      },
+      {
+        "name": "tasks-org-15.13.0-windows-amd64.zip",
+        "browser_download_url": "https://github.com/tasks/tasks/releases/download/15.13/tasks-org-15.13.0-windows-amd64.zip",
+        "size": 126872540,
+        "digest": "sha256:c97b8d60863ef6f47ecbe51e20b72698744435f2c6c10f67add67be601ae6ae1",
+        "state": "uploaded"
+      },
+      {
+        "name": "tasks-org-15.13.0.arm64.msix",
+        "browser_download_url": "https://github.com/tasks/tasks/releases/download/15.13/tasks-org-15.13.0.arm64.msix",
+        "size": 124408274,
+        "digest": "sha256:d79470c484a6ce7cd6e02ea2ea268e3be8317986a05b8ce3a16c825f5061bb14",
+        "state": "uploaded"
+      },
+      {
+        "name": "tasks-org-15.13.0.x64.msix",
+        "browser_download_url": "https://github.com/tasks/tasks/releases/download/15.13/tasks-org-15.13.0.x64.msix",
+        "size": 128633888,
+        "digest": "sha256:65c4b4ce5bc863e49f8bda62a86b87c000b46319a861cfa5659a3bfe9609fd7b",
+        "state": "uploaded"
+      },
+      {
+        "name": "tasks-org-ha4v529wr7h46-arm64.appinstaller",
+        "browser_download_url": "https://github.com/tasks/tasks/releases/download/15.13/tasks-org-ha4v529wr7h46-arm64.appinstaller",
+        "size": 4098,
+        "digest": "sha256:d513c93753927f8bb26db6020f6115cd1474aa984ee1d675a40155ae8e14ed4a",
+        "state": "uploaded"
+      },
+      {
+        "name": "tasks-org-ha4v529wr7h46.appinstaller",
+        "browser_download_url": "https://github.com/tasks/tasks/releases/download/15.13/tasks-org-ha4v529wr7h46.appinstaller",
+        "size": 4098,
+        "digest": "sha256:7b7286fbf2303060b1dce70d21ba6e2f915f5197d3b32b0cae5c402a50fd7ae4",
+        "state": "uploaded"
+      },
+      {
+        "name": "tasks-org-linux-aarch64.AppImage",
+        "browser_download_url": "https://github.com/tasks/tasks/releases/download/15.13/tasks-org-linux-aarch64.AppImage",
+        "size": 124426760,
+        "digest": "sha256:329cecb6bfeecf479d4e0db635e3f5687e7c60369c2828f8fa6c4ef52049e4ab",
+        "state": "uploaded"
+      },
+      {
+        "name": "tasks-org-linux-aarch64.AppImage.zsync",
+        "browser_download_url": "https://github.com/tasks/tasks/releases/download/15.13/tasks-org-linux-aarch64.AppImage.zsync",
+        "size": 212882,
+        "digest": "sha256:6fddd4c1a69e6523760b5e1c9ddf77e2416416cf7bb147021418f5e286494e8f",
+        "state": "uploaded"
+      },
+      {
+        "name": "tasks-org-linux-x86_64.AppImage",
+        "browser_download_url": "https://github.com/tasks/tasks/releases/download/15.13/tasks-org-linux-x86_64.AppImage",
+        "size": 125733368,
+        "digest": "sha256:1ada0c3a137154470483c71f64927319c4a653b7a05067c5dc7b2f550f83aa0e",
+        "state": "uploaded"
+      },
+      {
+        "name": "tasks-org-linux-x86_64.AppImage.zsync",
+        "browser_download_url": "https://github.com/tasks/tasks/releases/download/15.13/tasks-org-linux-x86_64.AppImage.zsync",
+        "size": 215113,
+        "digest": "sha256:1166c89ffba017617adf94f9da800fadf182844262a261eceaddabf3abefc8cd",
+        "state": "uploaded"
+      },
+      {
+        "name": "tasks-org.exe",
+        "browser_download_url": "https://github.com/tasks/tasks/releases/download/15.13/tasks-org.exe",
+        "size": 696232,
+        "digest": "sha256:624ac808bbec4917492026b64c1d2e3e32a790561892ff6127f077149f5ef208",
+        "state": "uploaded"
+      },
+      {
+        "name": "tasks-pebble-15.13.pbw",
+        "browser_download_url": "https://github.com/tasks/tasks/releases/download/15.13/tasks-pebble-15.13.pbw",
+        "size": 147188,
+        "digest": "sha256:5052d5745cf4fd71fe75228ba7cc20a19e40e838bc822c9894823bbecfd36b20",
+        "state": "uploaded"
+      },
+      {
+        "name": "tasksorg-llc-tasks-org_15.13.0_amd64.deb",
+        "browser_download_url": "https://github.com/tasks/tasks/releases/download/15.13/tasksorg-llc-tasks-org_15.13.0_amd64.deb",
+        "size": 108565224,
+        "digest": "sha256:85127dda07c88566f33e07497f1d659c6f137cc20d6c6e59b2013c4a626fbd33",
+        "state": "uploaded"
+      },
+      {
+        "name": "tasksorg-llc-tasks-org_15.13.0_arm64.deb",
+        "browser_download_url": "https://github.com/tasks/tasks/releases/download/15.13/tasksorg-llc-tasks-org_15.13.0_arm64.deb",
+        "size": 106616280,
+        "digest": "sha256:4ec4469c7c6fe63d8dc0bd109105c8d61ddd61477aa0cd22af43703d607b4239",
+        "state": "uploaded"
+      }
+    ]
+  },
+  "https://api.github.com/repos/gsantner/markor/releases/latest": {
+    "tag_name": "v2.16.1",
+    "html_url": "https://github.com/gsantner/markor/releases/tag/v2.16.1",
+    "body": "### v2.16 series\r\n- [2.16.0 - 2.16.1](https://github.com/gsantner/markor/compare/v2.16.0...v2.16.1)\r\n- [2.15.0 - 2.16.0](https://github.com/gsantner/markor/compare/v2.15.0...v2.16.0)\r\n- [2.15.2 - 2.16.0](https://github.com/gsantner/markor/compare/v2.15.2...v2.16.0)",
+    "draft": false,
+    "prerelease": false,
+    "assets": [
+      {
+        "name": "net.gsantner.markor-v163-2.16.1-flavorDefault-release.apk",
+        "browser_download_url": "https://github.com/gsantner/markor/releases/download/v2.16.1/net.gsantner.markor-v163-2.16.1-flavorDefault-release.apk",
+        "size": 12065877,
+        "digest": "sha256:e88cdcced7aa3dca25e6b9c7a9bdcfad3e3988ee545be951f42bf9441b5e46bf",
+        "state": "uploaded"
+      }
+    ]
+  },
+  "https://api.github.com/repos/zhanghai/MaterialFiles/releases/latest": {
+    "tag_name": "v1.7.5",
+    "html_url": "https://github.com/zhanghai/MaterialFiles/releases/tag/v1.7.5",
+    "body": "- Added support for Shizuku.\r\n- Added Danish and Galician translation.\r\n- Changed encryption when creating ZIP archive from ZipCrypto to AES-256.\r\n- Material Design 2 theme may be removed in the upcoming version 1.8.0.\r\n- Other bug fixes and improvements.",
+    "draft": false,
+    "prerelease": false,
+    "assets": [
+      {
+        "name": "app-release-fdroid.apk",
+        "browser_download_url": "https://github.com/zhanghai/MaterialFiles/releases/download/v1.7.5/app-release-fdroid.apk",
+        "size": 10944578,
+        "digest": "sha256:2fe900bf43d725b655008d438f5ca46d0da0f301e3784403b5b96c3fc2df6e8a",
+        "state": "uploaded"
+      },
+      {
+        "name": "app-release-universal.apk",
+        "browser_download_url": "https://github.com/zhanghai/MaterialFiles/releases/download/v1.7.5/app-release-universal.apk",
+        "size": 13747821,
+        "digest": "sha256:f2e7f028fbddf51d7ee90ace27a1ae4b247511e12514d1def6c9e52435feac40",
+        "state": "uploaded"
+      },
+      {
+        "name": "app-release.aab",
+        "browser_download_url": "https://github.com/zhanghai/MaterialFiles/releases/download/v1.7.5/app-release.aab",
+        "size": 17565285,
+        "digest": "sha256:0cc959cd5173b5459260c255e2becd5f6e4088ba4f0e98ce0ab2ff5af33805ee",
+        "state": "uploaded"
+      }
+    ]
+  },
+  "https://api.github.com/repos/localsend/localsend/releases/latest": {
+    "tag_name": "v1.18.2",
+    "html_url": "https://github.com/localsend/localsend/releases/tag/v1.18.2",
+    "body": "This release fixes compatibility issues with 1.17.0 and earlier.\r\nNote: The Windows binaries have been updated to include a signature.\r\n\r\n- feat: drag and drop files into the \"Receive via link\" browser page\r\n- feat(desktop): allow customizing the web share pages by placing HTML files in a `web` folder next to the executable\r\n- feat(cli): add version info to the Windows executable\r\n- feat(linux): set actual version in the AppImage\r\n- security: do not follow HTTP redirects sent by peers\r\n- fix: restore compatibility with 1.17.0 and earlier versions on missing multicast networks\r\n- fix: devices running 1.17.0 and earlier could not add 1.18.0+ device as favorite\r\n- fix: ignore proxies, fixes \"TLS info not found\" when a system proxy (e.g. Shadowrocket) is enabled\r\n- fix: automatically restart the HTTP / multicast server when it dies or when the app resumes\r\n- fix: drag and drop with a mix of folders and files\r\n- fix: during transfer, add bottom padding when Advanced is open (@Chethan616)\r\n- fix: do not crash at startup when the executable path cannot be resolved (@Shlomo116)\r\n- fix(android): ignore unknown or invalid file modification times when reading files\r\n- i18n: add Armenian",
+    "draft": false,
+    "prerelease": false,
+    "assets": [
+      {
+        "name": "LocalSend-1.18.2-android-arm32v7.apk",
+        "browser_download_url": "https://github.com/localsend/localsend/releases/download/v1.18.2/LocalSend-1.18.2-android-arm32v7.apk",
+        "size": 39333444,
+        "digest": "sha256:222b02d2813578a574cd3fbcfa7b8ff317d4887edb9ca0fb7b292816d222dc63",
+        "state": "uploaded"
+      },
+      {
+        "name": "LocalSend-1.18.2-android-arm64v8.apk",
+        "browser_download_url": "https://github.com/localsend/localsend/releases/download/v1.18.2/LocalSend-1.18.2-android-arm64v8.apk",
+        "size": 46558706,
+        "digest": "sha256:82ec3568fba2aa5295b9aae8b76f701d7a4703d86b9f8bad749472038fbaeab3",
+        "state": "uploaded"
+      },
+      {
+        "name": "LocalSend-1.18.2-android-google-play.apk",
+        "browser_download_url": "https://github.com/localsend/localsend/releases/download/v1.18.2/LocalSend-1.18.2-android-google-play.apk",
+        "size": 128293112,
+        "digest": "sha256:ca08306fbedad33790efa02240bc530c3f248e69a1a1ea780fa553f68202f436",
+        "state": "uploaded"
+      },
+      {
+        "name": "LocalSend-1.18.2-android-x64.apk",
+        "browser_download_url": "https://github.com/localsend/localsend/releases/download/v1.18.2/LocalSend-1.18.2-android-x64.apk",
+        "size": 48939435,
+        "digest": "sha256:93e30ddbf84121ad2048c5a61763f2b37738f593699a9f0cf39a8404177aa05b",
+        "state": "uploaded"
+      },
+      {
+        "name": "LocalSend-1.18.2-linux-arm-64.deb",
+        "browser_download_url": "https://github.com/localsend/localsend/releases/download/v1.18.2/LocalSend-1.18.2-linux-arm-64.deb",
+        "size": 24662482,
+        "digest": "sha256:bbd8347b7979f936d3bae176a3f0d9b81431605707c585270d6240f7670feb1f",
+        "state": "uploaded"
+      },
+      {
+        "name": "LocalSend-1.18.2-linux-arm-64.tar.gz",
+        "browser_download_url": "https://github.com/localsend/localsend/releases/download/v1.18.2/LocalSend-1.18.2-linux-arm-64.tar.gz",
+        "size": 32354331,
+        "digest": "sha256:dd61f74f1ce3f4e25aca41cd3ce650d6a99353d7baba81a8139807275b88e606",
+        "state": "uploaded"
+      },
+      {
+        "name": "LocalSend-1.18.2-linux-x86-64.AppImage",
+        "browser_download_url": "https://github.com/localsend/localsend/releases/download/v1.18.2/LocalSend-1.18.2-linux-x86-64.AppImage",
+        "size": 66471104,
+        "digest": "sha256:19f21613d1834f6caa69517113670461a3f10b80a2a315f86548c0663d9c0aaf",
+        "state": "uploaded"
+      },
+      {
+        "name": "LocalSend-1.18.2-linux-x86-64.deb",
+        "browser_download_url": "https://github.com/localsend/localsend/releases/download/v1.18.2/LocalSend-1.18.2-linux-x86-64.deb",
+        "size": 24665458,
+        "digest": "sha256:cc42a4f3eacdcb25ec31f0016b1272acb003145ab30484db8965450e20c72cd2",
+        "state": "uploaded"
+      },
+      {
+        "name": "LocalSend-1.18.2-linux-x86-64.tar.gz",
+        "browser_download_url": "https://github.com/localsend/localsend/releases/download/v1.18.2/LocalSend-1.18.2-linux-x86-64.tar.gz",
+        "size": 32011656,
+        "digest": "sha256:287690a9a8eb6da9c83cc97b3e3030ac67daf32a7331fcf307d0939300658d16",
+        "state": "uploaded"
+      },
+      {
+        "name": "LocalSend-1.18.2-windows-arm-64.zip",
+        "browser_download_url": "https://github.com/localsend/localsend/releases/download/v1.18.2/LocalSend-1.18.2-windows-arm-64.zip",
+        "size": 24414965,
+        "digest": "sha256:e441259257f24557e1b21f15783af106b70229e36e789a2525b6726841fb7bc1",
+        "state": "uploaded"
+      },
+      {
+        "name": "LocalSend-1.18.2-windows-x86-64-unsigned.exe",
+        "browser_download_url": "https://github.com/localsend/localsend/releases/download/v1.18.2/LocalSend-1.18.2-windows-x86-64-unsigned.exe",
+        "size": 18960550,
+        "digest": "sha256:f53856750ad087a17b996309171262fa7d89071c350e0dc5df6530f34dd8a2ae",
+        "state": "uploaded"
+      },
+      {
+        "name": "LocalSend-1.18.2-windows-x86-64.exe",
+        "browser_download_url": "https://github.com/localsend/localsend/releases/download/v1.18.2/LocalSend-1.18.2-windows-x86-64.exe",
+        "size": 19901144,
+        "digest": "sha256:122783e6abb4b0a1f1603d896f46a03aeda3004479ebd3175cab4ddac6b60919",
+        "state": "uploaded"
+      },
+      {
+        "name": "LocalSend-1.18.2-windows-x86-64.zip",
+        "browser_download_url": "https://github.com/localsend/localsend/releases/download/v1.18.2/LocalSend-1.18.2-windows-x86-64.zip",
+        "size": 26113764,
+        "digest": "sha256:737aab1829d901e1d798cddd1e5fdc06ba9dfcc9ea50cfe3805e047005d5e71a",
+        "state": "uploaded"
+      },
+      {
+        "name": "LocalSend-1.18.2.dmg",
+        "browser_download_url": "https://github.com/localsend/localsend/releases/download/v1.18.2/LocalSend-1.18.2.dmg",
+        "size": 52700247,
+        "digest": "sha256:126860d56f6f49b11845f601aac51de27a49b16d2b48102415da91e0e37e5155",
+        "state": "uploaded"
+      },
+      {
+        "name": "LocalSend-CLI-1.18.2-linux-arm-64.tar.gz",
+        "browser_download_url": "https://github.com/localsend/localsend/releases/download/v1.18.2/LocalSend-CLI-1.18.2-linux-arm-64.tar.gz",
+        "size": 4639269,
+        "digest": "sha256:b003e9837743470f7a423ca1205e664031ce3d2e865acc692f3e47577ea93f6d",
+        "state": "uploaded"
+      },
+      {
+        "name": "LocalSend-CLI-1.18.2-linux-x86-64.tar.gz",
+        "browser_download_url": "https://github.com/localsend/localsend/releases/download/v1.18.2/LocalSend-CLI-1.18.2-linux-x86-64.tar.gz",
+        "size": 4762297,
+        "digest": "sha256:f5a986e0b4701b9aafeb9747225a2f3e314e97aba61b3dd7c9d076226f512b08",
+        "state": "uploaded"
+      },
+      {
+        "name": "LocalSend-CLI-1.18.2-macos-arm-64.tar.gz",
+        "browser_download_url": "https://github.com/localsend/localsend/releases/download/v1.18.2/LocalSend-CLI-1.18.2-macos-arm-64.tar.gz",
+        "size": 4105018,
+        "digest": "sha256:c375664d632a3065c135e712175fb336ceff1613e5e54ee3e04911db82e1b0fc",
+        "state": "uploaded"
+      },
+      {
+        "name": "LocalSend-CLI-1.18.2-macos-x86-64.tar.gz",
+        "browser_download_url": "https://github.com/localsend/localsend/releases/download/v1.18.2/LocalSend-CLI-1.18.2-macos-x86-64.tar.gz",
+        "size": 4397211,
+        "digest": "sha256:bef783d8abce9e903a2e9bbb60471df206a22fc9840e831cc63e8221054488e6",
+        "state": "uploaded"
+      },
+      {
+        "name": "LocalSend-CLI-1.18.2-windows-arm-64.exe",
+        "browser_download_url": "https://github.com/localsend/localsend/releases/download/v1.18.2/LocalSend-CLI-1.18.2-windows-arm-64.exe",
+        "size": 8355328,
+        "digest": "sha256:0ff4c4c90ea68f0cc586b5a08c900f89bf71c02a454c78cd035bc3c4fc879bf7",
+        "state": "uploaded"
+      },
+      {
+        "name": "LocalSend-CLI-1.18.2-windows-x86-64.exe",
+        "browser_download_url": "https://github.com/localsend/localsend/releases/download/v1.18.2/LocalSend-CLI-1.18.2-windows-x86-64.exe",
+        "size": 9725952,
+        "digest": "sha256:ca0b267e7457324b3664a935de4e4956da701a7fa1045f6f99c72602f7f8dc38",
+        "state": "uploaded"
+      }
+    ]
+  },
+  "https://api.github.com/repos/ankidroid/Anki-Android/releases/latest": {
+    "tag_name": "v2.25.3",
+    "html_url": "https://github.com/ankidroid/Anki-Android/releases/tag/v2.25.3",
+    "body": "> [!IMPORTANT]\n> GitHub does not auto-update apps\n\n\n## For regular users\n\nInstall `arm64-v8a` from the **Assets** section below. If it fails to install, use `Parallel.A`.\n\n`Parallel` builds install side-by-side with the main APK, allowing you to use different settings and profiles (via the `AnkiDroid directory` advanced setting and a different AnkiWeb login).\n\n\n## For testers\n\nThe builds with `full`, `play` and `amazon` are useful for testing our builds for different app stores:\n\n- **`full`**: F-Droid & GitHub `Parallel` apks\n- **`play`**: Google Play - does not have `MANAGE_EXTERNAL_STORAGE` permission as it is forbidden by Google, on uninstall the user is invited to delete data.\n- **`amazon`**: Amazon - currently same as full, historically removed `CAMERA` permission\n\n\n## ABI variants\n\nWe perform ABI splits to reduce APK size. In rare cases, a phone may not be using the `arm64-v8a` ABI. You can find your phone's ABI using [kamgurgul/cpu-info](https://github.com/kamgurgul/cpu-info). If disk space isn't an issue, use the `full` apk.",
+    "draft": false,
+    "prerelease": false,
+    "assets": [
+      {
+        "name": "AnkiDroid-2.25.3-arm64-v8a.apk",
+        "browser_download_url": "https://github.com/ankidroid/Anki-Android/releases/download/v2.25.3/AnkiDroid-2.25.3-arm64-v8a.apk",
+        "size": 41173951,
+        "digest": "sha256:68de13faf1819008946850aa7c7873f8d60f057ffa96dc2bb5b1ad1bade4df80",
+        "state": "uploaded"
+      },
+      {
+        "name": "AnkiDroid-2.25.3-full-universal.apk",
+        "browser_download_url": "https://github.com/ankidroid/Anki-Android/releases/download/v2.25.3/AnkiDroid-2.25.3-full-universal.apk",
+        "size": 111759228,
+        "digest": "sha256:cccf84acc2187eb710614538b80d12d8692f5411dc1b8bfaf0ac08005a84f665",
+        "state": "uploaded"
+      },
+      {
+        "name": "AnkiDroid-2.25.3.parallel.A.apk",
+        "browser_download_url": "https://github.com/ankidroid/Anki-Android/releases/download/v2.25.3/AnkiDroid-2.25.3.parallel.A.apk",
+        "size": 111759256,
+        "digest": "sha256:08bef0665ef3cad3e1b6352a7f22e51278dfb2a1a8d468cf20ad945735ed0785",
+        "state": "uploaded"
+      },
+      {
+        "name": "AnkiDroid-2.25.3.parallel.B.apk",
+        "browser_download_url": "https://github.com/ankidroid/Anki-Android/releases/download/v2.25.3/AnkiDroid-2.25.3.parallel.B.apk",
+        "size": 111759260,
+        "digest": "sha256:bb5e5b71d94929908ea3048643c7e8791ce65883f5881beb4b73be620238029c",
+        "state": "uploaded"
+      },
+      {
+        "name": "AnkiDroid-2.25.3.parallel.C.apk",
+        "browser_download_url": "https://github.com/ankidroid/Anki-Android/releases/download/v2.25.3/AnkiDroid-2.25.3.parallel.C.apk",
+        "size": 111759260,
+        "digest": "sha256:0e46f025b02322e042b018526fbc0ed0f41874470960b6c5432274a043b9d48d",
+        "state": "uploaded"
+      },
+      {
+        "name": "dev-AnkiDroid-2.25.3-amazon-universal.apk",
+        "browser_download_url": "https://github.com/ankidroid/Anki-Android/releases/download/v2.25.3/dev-AnkiDroid-2.25.3-amazon-universal.apk",
+        "size": 111759216,
+        "digest": "sha256:f2604cc2bec993961f639013b83f0114ae1663f585356e0c52ef9ced83df92b3",
+        "state": "uploaded"
+      },
+      {
+        "name": "dev-AnkiDroid-2.25.3-play-universal.apk",
+        "browser_download_url": "https://github.com/ankidroid/Anki-Android/releases/download/v2.25.3/dev-AnkiDroid-2.25.3-play-universal.apk",
+        "size": 111759156,
+        "digest": "sha256:0f58e1b86075e22c116af1d673a44c620014e4ccc953a157eba49fb5b46a8c27",
+        "state": "uploaded"
+      },
+      {
+        "name": "variant-abi-AnkiDroid-2.25.3-armeabi-v7a.apk",
+        "browser_download_url": "https://github.com/ankidroid/Anki-Android/releases/download/v2.25.3/variant-abi-AnkiDroid-2.25.3-armeabi-v7a.apk",
+        "size": 36874895,
+        "digest": "sha256:081f940d50de49d1cde03082d69101b6ce773e983f5648cabf2f98ed2768c015",
+        "state": "uploaded"
+      },
+      {
+        "name": "variant-abi-AnkiDroid-2.25.3-x86.apk",
+        "browser_download_url": "https://github.com/ankidroid/Anki-Android/releases/download/v2.25.3/variant-abi-AnkiDroid-2.25.3-x86.apk",
+        "size": 42495891,
+        "digest": "sha256:9c01c93f936758fd8a9d90c436bf58df4351f9e328bcef7a630d56a6cfda6b41",
+        "state": "uploaded"
+      },
+      {
+        "name": "variant-abi-AnkiDroid-2.25.3-x86_64.apk",
+        "browser_download_url": "https://github.com/ankidroid/Anki-Android/releases/download/v2.25.3/variant-abi-AnkiDroid-2.25.3-x86_64.apk",
+        "size": 43797921,
+        "digest": "sha256:154101f06f4ba286248fa4a26863f759d3a1631bd4b1d6790503ec35a85edac7",
+        "state": "uploaded"
+      },
+      {
+        "name": "z-AnkiDroid-2.25.3-full-universal-nominify.apk",
+        "browser_download_url": "https://github.com/ankidroid/Anki-Android/releases/download/v2.25.3/z-AnkiDroid-2.25.3-full-universal-nominify.apk",
+        "size": 126833416,
+        "digest": "sha256:a5ad1568d5ba0de8e3c1a11f965ca3dbf4710e3c904709d364cd14e346c4ea50",
+        "state": "uploaded"
+      },
+      {
+        "name": "z-proguard-mappings.tar.gz",
+        "browser_download_url": "https://github.com/ankidroid/Anki-Android/releases/download/v2.25.3/z-proguard-mappings.tar.gz",
+        "size": 71368957,
+        "digest": "sha256:490b61667337d2d9b5b93b501aab9421966a1ef1528b8ec22b6f255aebf76837",
+        "state": "uploaded"
+      }
+    ]
+  },
+  "https://api.github.com/repos/FossifyOrg/Gallery/releases/latest": {
+    "tag_name": "1.14.0",
+    "html_url": "https://github.com/FossifyOrg/Gallery/releases/tag/1.14.0",
+    "body": "### Changed\n\n- Compatibility with newer Android devices using 16KB pages\n- Updated translations\n\n**Full Changelog:** https://github.com/FossifyOrg/Gallery/compare/1.13.1...1.14.0\n\n",
+    "draft": false,
+    "prerelease": false,
+    "assets": [
+      {
+        "name": "gallery-29-foss-release.apk",
+        "browser_download_url": "https://github.com/FossifyOrg/Gallery/releases/download/1.14.0/gallery-29-foss-release.apk",
+        "size": 38538363,
+        "digest": "sha256:cfa321d7467b116741689f8f118b46011c882a4c2359b9320111f87c998af373",
+        "state": "uploaded"
+      }
+    ]
+  },
+  "https://api.github.com/repos/FossifyOrg/File-Manager/releases/latest": {
+    "tag_name": "1.6.2",
+    "html_url": "https://github.com/FossifyOrg/File-Manager/releases/tag/1.6.2",
+    "body": "### Changed\n\n- Updated translations\n\n### Fixed\n\n- Fixed the modification of the original timestamp when decompressing folders (#190)\n\n**Full Changelog:** https://github.com/FossifyOrg/File-Manager/compare/1.6.1...1.6.2\n\n",
+    "draft": false,
+    "prerelease": false,
+    "assets": [
+      {
+        "name": "file-manager-14-foss-release.apk",
+        "browser_download_url": "https://github.com/FossifyOrg/File-Manager/releases/download/1.6.2/file-manager-14-foss-release.apk",
+        "size": 10030982,
+        "digest": "sha256:c2993c75ea7287e7ede354b061d9c8772aa9b4b050e7660ec1ebc3592dc3d051",
+        "state": "uploaded"
+      }
+    ]
+  },
+  "https://api.github.com/repos/FossifyOrg/Calendar/releases/latest": {
+    "tag_name": "1.12.0",
+    "html_url": "https://github.com/FossifyOrg/Calendar/releases/tag/1.12.0",
+    "body": "### Added\n\n- Added holidays for more countries\n\n### Changed\n\n- Updated holiday data\n- Updated translations\n\n### Fixed\n\n- Removed padding around monthly calendar widget (#63)\n- Fixed clipped text in the event-list widget (#521)\n\n**Full Changelog:** https://github.com/FossifyOrg/Calendar/compare/1.11.0...1.12.0\n\n",
+    "draft": false,
+    "prerelease": false,
+    "assets": [
+      {
+        "name": "calendar-23-foss-release.apk",
+        "browser_download_url": "https://github.com/FossifyOrg/Calendar/releases/download/1.12.0/calendar-23-foss-release.apk",
+        "size": 8203041,
+        "digest": "sha256:d43b2df05d5702bea760a7ab03402977ba72e446e5932038efbdab248a5de987",
+        "state": "uploaded"
+      }
+    ]
+  }
+}

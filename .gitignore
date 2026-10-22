@@ -22,3 +22,6 @@ third_party/gpu/
 .build/
 *.ipa
 .freebuff/
+
+# Private Mac bridge pairing credentials
+*.prf

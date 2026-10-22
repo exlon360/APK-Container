@@ -14,6 +14,8 @@ struct ContentView: View {
     @ObservedObject private var host = AndroidHost.shared
 
     @State private var started = false
+    /// Keep visited native screens mounted so a tab change preserves its draft and navigation.
+    @State private var visitedTabs: Set<HuskTab> = [.library]
     /// A user-requested app launch or import waiting for JIT or runtime installation.
     @State private var runtimeRequested = false
     @State private var showLogs = false
@@ -58,15 +60,7 @@ struct ContentView: View {
             // with the tabs is the arrangement that survives that. Showing
             // Android is then a matter of hiding what is over it, which is also
             // why it appears instantly rather than reloading.
-            TabView(selection: tabSelection) {
-                LibraryScreen()
-                    .tabItem { Label("Apps", systemImage: "square.stack.3d.up.fill") }
-                    .tag(HuskTab.library)
-
-                SettingsTab()
-                    .tabItem { Label("Settings", systemImage: "gearshape.fill") }
-                    .tag(HuskTab.settings)
-            }
+            navigationShell
             .opacity(appSessionPresented ? 0 : 1)
             .allowsHitTesting(!appSessionPresented)
             .accessibilityHidden(appSessionPresented)
@@ -194,6 +188,40 @@ struct ContentView: View {
             // StikDebug relaunches Husk after attaching, so returning to the
             // foreground is the moment worth re-checking, not first launch.
             if phase == .active { evaluate() }
+        }
+    }
+
+    /// A floating, horizontally scrollable capsule fits all destinations on a phone
+    /// without collapsing Build or My Apps into a system "More" tab.
+    private var navigationShell: some View {
+        VStack(spacing: 0) {
+            ContainerNavigationBar(selection: tabSelection)
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 8)
+            ZStack {
+                retainedPage(.library) { LibraryScreen() }
+                retainedPage(.build) { BuildScreen() }
+                retainedPage(.myApps) { MyAppsScreen() }
+                retainedPage(.repositories) { RepositoriesScreen() }
+                retainedPage(.store) { RepositoryStoreScreen() }
+                retainedPage(.settings) { SettingsTab() }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .background(Console.page.ignoresSafeArea())
+        .onChange(of: router.tab) { visitedTabs.insert($0) }
+    }
+
+    @ViewBuilder
+    private func retainedPage<Page: View>(_ tab: HuskTab, @ViewBuilder content: () -> Page) -> some View {
+        if visitedTabs.contains(tab) || router.tab == tab {
+            content()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .opacity(router.tab == tab ? 1 : 0)
+                .allowsHitTesting(router.tab == tab)
+                .accessibilityHidden(router.tab != tab)
+                .zIndex(router.tab == tab ? 1 : 0)
         }
     }
 
@@ -366,6 +394,46 @@ struct ContentView: View {
         bridge.startWatching()
         GuestBridge.shared.startHealthWatch()
         if QemuRunner.soundEnabled { HuskAudio.shared.start() }
+    }
+}
+
+/// Native navigation shared by the phone and iPad layouts. The capsule scrolls
+/// when needed and follows programmatic navigation to an offscreen destination.
+private struct ContainerNavigationBar: View {
+    @Binding var selection: HuskTab
+
+    var body: some View {
+        HStack {
+            Spacer(minLength: 0)
+            ScrollViewReader { reader in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 3) {
+                        ForEach(HuskTab.allCases) { tab in
+                            Button { selection = tab } label: {
+                                Text(tab.title)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(selection == tab ? Color.blue : Color.primary.opacity(0.85))
+                                    .padding(.horizontal, 17)
+                                    .frame(minHeight: 44)
+                                    .background(selection == tab ? Console.page.opacity(0.75) : Color.clear, in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityAddTraits(selection == tab ? .isSelected : [])
+                            .accessibilityIdentifier("container.tab." + tab.rawValue)
+                            .id(tab)
+                        }
+                    }
+                    .padding(4)
+                }
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.12), lineWidth: 1))
+                .onChange(of: selection) { tab in
+                    withAnimation(.easeOut(duration: 0.2)) { reader.scrollTo(tab, anchor: .center) }
+                }
+            }
+            .frame(maxWidth: 760)
+            Spacer(minLength: 0)
+        }
     }
 }
 

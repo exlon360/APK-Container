@@ -1,10 +1,12 @@
 # APK Container
 
-APK Container is an Android-app-focused fork of [Husk by Leviidev and contributors](https://github.com/Leviidev/Husk) for iPhone and iPad. It replaces the console-style home with a native **Apps** library and grouped **Settings**, with a layout inspired by LiveContainer.
+APK Container is an Android-app-focused fork of [Husk by Leviidev and contributors](https://github.com/Leviidev/Husk) for iPhone and iPad. Its native interface takes inspiration from LiveContainer: a dark background, tinted app rows, large icons, Run buttons, and a floating tab bar for **Apps**, **Build**, **My Apps**, **Repositories**, **Store**, and **Settings**.
 
 ## What changes
 
 - Import APKs and supported split bundles, open apps from the library, and manage their individual settings.
+- Browse ten included GitHub release repositories in **Store**; enable, disable, or add GitHub repositories in **Repositories**. Downloads use HTTPS, size limits, APK structure checks, and published SHA-256 digests when available.
+- Describe an app in **Build** and follow Codex replies from your paired Mac. **My Apps** keeps each conversation and its finished APKs. The companion **APK Container Bridge** includes the `/apk` skill and uses an encrypted, certificate-pinned connection.
 - Native iPhone/iPad resolution is the default for the translation layer. Choose performance presets or a custom 320–4096 pixel longest-edge limit; the other edge follows the display's proportions.
 - Apps can open fullscreen or in a movable window. Fixed-size rendering surfaces keep their aspect ratio when resized.
 - App sessions have no permanent host toolbar. Tap with three fingers for **App Files**, keyboard controls, or **Return to Apps**.
@@ -30,6 +32,14 @@ The app-only launch gate reads Android's window-service process identity through
 5. Inside an app, tap with **three fingers** to access files, show the keyboard, arrange a floating window, or explicitly return to Apps. A stopped app stays in its session; the compatibility runtime offers **Retry** without discarding app data.
 
 The app's identity is `com.apkcontainer.app`, with the `apkcontainer://` URL scheme. It uses a separate app container from upstream Husk under the default identifiers. Existing Husk saves are not automatically migrated. There is no automatic sideloading update feed configured; install an IPA from this fork’s releases or a local build.
+
+## Build apps with your Mac
+
+Download **APK Container Bridge** alongside the IPA from Releases. On your Apple Silicon Mac, move it to `~/Applications`, open it, choose **Generate agent.prf**, and import that file under **Build** on your iPhone or iPad. Choose **Pair Skill /apk** on the Mac, then describe your app in Build. Keep the bridge open and both devices on the same network or a reachable private VPN. Codex must already be installed and signed in on the Mac.
+
+Every new app gets its own project and Codex conversation under `~/Documents/ChatGPT/apk files`. Later messages edit that same project; **+** starts a separate app. Setup prompts are hidden from the device conversation, while Codex replies, questions, and approval requests remain visible. A completion card appears only when a finished turn produces a verified APK; opening **My Apps → Install APK** uses APK Container’s existing import flow.
+
+See [the Build and Bridge guide](docs/APK-BUILDER.md) for pairing, repositories, backups, troubleshooting, and current limits.
 
 ## Current limits
 

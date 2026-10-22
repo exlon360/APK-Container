@@ -1,0 +1,202 @@
+[
+  {
+    "name": "NewPipe",
+    "identifier": "https://api.github.com/repos/TeamNewPipe/NewPipe/releases/latest",
+    "apps": [
+      {
+        "name": "NewPipe",
+        "bundleIdentifier": "org.schabi.newpipe",
+        "version": "v0.29.1",
+        "downloadURL": "https://github.com/TeamNewPipe/NewPipe/releases/download/v0.29.1/NewPipe_v0.29.1.apk",
+        "iconURL": "",
+        "localizedDescription": "A lightweight video and audio client.",
+        "sha256": "18447bfb1e06d113edc88df93f471827280de06f6f3d4dc42f56f28b9c1bab79",
+        "downloadSize": 11507122,
+        "projectURL": "https://github.com/TeamNewPipe/NewPipe/releases/tag/v0.29.1",
+        "assetName": "NewPipe_v0.29.1.apk",
+        "iconSymbol": "play.rectangle.fill"
+      }
+    ],
+    "fetchedAt": "2026-10-22T02:04:32Z"
+  },
+  {
+    "name": "Aegis",
+    "identifier": "https://api.github.com/repos/beemdevelopment/Aegis/releases/latest",
+    "apps": [
+      {
+        "name": "Aegis",
+        "bundleIdentifier": "com.beemdevelopment.aegis",
+        "version": "v3.4.3",
+        "downloadURL": "https://github.com/beemdevelopment/Aegis/releases/download/v3.4.3/aegis-v3.4.3.apk",
+        "iconURL": "",
+        "localizedDescription": "An open-source authenticator for your accounts.",
+        "sha256": "fa091c91912c0d56ec3553394fac4158f9a9d178e93bcbb35419601d788cb528",
+        "downloadSize": 6881897,
+        "projectURL": "https://github.com/beemdevelopment/Aegis/releases/tag/v3.4.3",
+        "assetName": "aegis-v3.4.3.apk",
+        "iconSymbol": "lock.shield.fill"
+      }
+    ],
+    "fetchedAt": "2026-10-22T02:04:32Z"
+  },
+  {
+    "name": "Tasks.org",
+    "identifier": "https://api.github.com/repos/tasks/tasks/releases/latest",
+    "apps": [
+      {
+        "name": "Tasks.org",
+        "bundleIdentifier": "org.tasks",
+        "version": "15.13",
+        "downloadURL": "https://github.com/tasks/tasks/releases/download/15.13/tasks-fdroid-15.13.apk",
+        "iconURL": "",
+        "localizedDescription": "To-do lists, reminders, and recurring tasks.",
+        "sha256": "7df9620d84a824a834598843f954943009012d75fbb16572e5ec88a414a576b9",
+        "downloadSize": 24729585,
+        "projectURL": "https://github.com/tasks/tasks/releases/tag/15.13",
+        "assetName": "tasks-fdroid-15.13.apk",
+        "iconSymbol": "checklist"
+      }
+    ],
+    "fetchedAt": "2026-10-22T02:04:32Z"
+  },
+  {
+    "name": "Markor",
+    "identifier": "https://api.github.com/repos/gsantner/markor/releases/latest",
+    "apps": [
+      {
+        "name": "Markor",
+        "bundleIdentifier": "net.gsantner.markor",
+        "version": "v2.16.1",
+        "downloadURL": "https://github.com/gsantner/markor/releases/download/v2.16.1/net.gsantner.markor-v163-2.16.1-flavorDefault-release.apk",
+        "iconURL": "",
+        "localizedDescription": "Plain text, Markdown, and to-do editing.",
+        "sha256": "e88cdcced7aa3dca25e6b9c7a9bdcfad3e3988ee545be951f42bf9441b5e46bf",
+        "downloadSize": 12065877,
+        "projectURL": "https://github.com/gsantner/markor/releases/tag/v2.16.1",
+        "assetName": "net.gsantner.markor-v163-2.16.1-flavorDefault-release.apk",
+        "iconSymbol": "doc.text.fill"
+      }
+    ],
+    "fetchedAt": "2026-10-22T02:04:32Z"
+  },
+  {
+    "name": "Material Files",
+    "identifier": "https://api.github.com/repos/zhanghai/MaterialFiles/releases/latest",
+    "apps": [
+      {
+        "name": "Material Files",
+        "bundleIdentifier": "me.zhanghai.android.files",
+        "version": "v1.7.5",
+        "downloadURL": "https://github.com/zhanghai/MaterialFiles/releases/download/v1.7.5/app-release-universal.apk",
+        "iconURL": "",
+        "localizedDescription": "Browse and manage Android files.",
+        "sha256": "f2e7f028fbddf51d7ee90ace27a1ae4b247511e12514d1def6c9e52435feac40",
+        "downloadSize": 13747821,
+        "projectURL": "https://github.com/zhanghai/MaterialFiles/releases/tag/v1.7.5",
+        "assetName": "app-release-universal.apk",
+        "iconSymbol": "folder.fill"
+      }
+    ],
+    "fetchedAt": "2026-10-22T02:04:32Z"
+  },
+  {
+    "name": "LocalSend",
+    "identifier": "https://api.github.com/repos/localsend/localsend/releases/latest",
+    "apps": [
+      {
+        "name": "LocalSend",
+        "bundleIdentifier": "org.localsend.localsend_app",
+        "version": "v1.18.2",
+        "downloadURL": "https://github.com/localsend/localsend/releases/download/v1.18.2/LocalSend-1.18.2-android-arm64v8.apk",
+        "iconURL": "",
+        "localizedDescription": "Share files with nearby devices on your network.",
+        "sha256": "82ec3568fba2aa5295b9aae8b76f701d7a4703d86b9f8bad749472038fbaeab3",
+        "downloadSize": 46558706,
+        "projectURL": "https://github.com/localsend/localsend/releases/tag/v1.18.2",
+        "assetName": "LocalSend-1.18.2-android-arm64v8.apk",
+        "iconSymbol": "arrow.up.arrow.down.circle.fill"
+      }
+    ],
+    "fetchedAt": "2026-10-22T02:04:32Z"
+  },
+  {
+    "name": "AnkiDroid",
+    "identifier": "https://api.github.com/repos/ankidroid/Anki-Android/releases/latest",
+    "apps": [
+      {
+        "name": "AnkiDroid",
+        "bundleIdentifier": "com.ichi2.anki",
+        "version": "v2.25.3",
+        "downloadURL": "https://github.com/ankidroid/Anki-Android/releases/download/v2.25.3/AnkiDroid-2.25.3-arm64-v8a.apk",
+        "iconURL": "",
+        "localizedDescription": "Flashcards and spaced-repetition study.",
+        "sha256": "68de13faf1819008946850aa7c7873f8d60f057ffa96dc2bb5b1ad1bade4df80",
+        "downloadSize": 41173951,
+        "projectURL": "https://github.com/ankidroid/Anki-Android/releases/tag/v2.25.3",
+        "assetName": "AnkiDroid-2.25.3-arm64-v8a.apk",
+        "iconSymbol": "rectangle.stack.fill"
+      }
+    ],
+    "fetchedAt": "2026-10-22T02:04:32Z"
+  },
+  {
+    "name": "Fossify Gallery",
+    "identifier": "https://api.github.com/repos/FossifyOrg/Gallery/releases/latest",
+    "apps": [
+      {
+        "name": "Fossify Gallery",
+        "bundleIdentifier": "org.fossify.gallery",
+        "version": "1.14.0",
+        "downloadURL": "https://github.com/FossifyOrg/Gallery/releases/download/1.14.0/gallery-29-foss-release.apk",
+        "iconURL": "",
+        "localizedDescription": "An offline gallery for photos and videos.",
+        "sha256": "cfa321d7467b116741689f8f118b46011c882a4c2359b9320111f87c998af373",
+        "downloadSize": 38538363,
+        "projectURL": "https://github.com/FossifyOrg/Gallery/releases/tag/1.14.0",
+        "assetName": "gallery-29-foss-release.apk",
+        "iconSymbol": "photo.on.rectangle.angled"
+      }
+    ],
+    "fetchedAt": "2026-10-22T02:04:32Z"
+  },
+  {
+    "name": "Fossify File Manager",
+    "identifier": "https://api.github.com/repos/FossifyOrg/File-Manager/releases/latest",
+    "apps": [
+      {
+        "name": "Fossify File Manager",
+        "bundleIdentifier": "org.fossify.filemanager",
+        "version": "1.6.2",
+        "downloadURL": "https://github.com/FossifyOrg/File-Manager/releases/download/1.6.2/file-manager-14-foss-release.apk",
+        "iconURL": "",
+        "localizedDescription": "A simple file manager for Android storage.",
+        "sha256": "c2993c75ea7287e7ede354b061d9c8772aa9b4b050e7660ec1ebc3592dc3d051",
+        "downloadSize": 10030982,
+        "projectURL": "https://github.com/FossifyOrg/File-Manager/releases/tag/1.6.2",
+        "assetName": "file-manager-14-foss-release.apk",
+        "iconSymbol": "externaldrive.fill"
+      }
+    ],
+    "fetchedAt": "2026-10-22T02:04:32Z"
+  },
+  {
+    "name": "Fossify Calendar",
+    "identifier": "https://api.github.com/repos/FossifyOrg/Calendar/releases/latest",
+    "apps": [
+      {
+        "name": "Fossify Calendar",
+        "bundleIdentifier": "org.fossify.calendar",
+        "version": "1.12.0",
+        "downloadURL": "https://github.com/FossifyOrg/Calendar/releases/download/1.12.0/calendar-23-foss-release.apk",
+        "iconURL": "",
+        "localizedDescription": "Calendar, events, and reminders.",
+        "sha256": "d43b2df05d5702bea760a7ab03402977ba72e446e5932038efbdab248a5de987",
+        "downloadSize": 8203041,
+        "projectURL": "https://github.com/FossifyOrg/Calendar/releases/tag/1.12.0",
+        "assetName": "calendar-23-foss-release.apk",
+        "iconSymbol": "calendar"
+      }
+    ],
+    "fetchedAt": "2026-10-22T02:04:32Z"
+  }
+]

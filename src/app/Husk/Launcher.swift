@@ -142,6 +142,8 @@ struct LibraryScreen: View {
     @ObservedObject private var guest = GuestImage.shared
     @ObservedObject private var runner = QemuRunner.shared
     @State private var query = ""
+    @State private var selectedItemID: String?
+    @Environment(\.horizontalSizeClass) private var sizeClass
     @AppStorage("apkcontainer.library.sortRecent") private var sortRecent = false
 
     private var allItems: [LibraryItem] { Launcher.items(store: store, host: host) }
@@ -154,100 +156,153 @@ struct LibraryScreen: View {
             : filtered.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
     }
 
+    private var sidePadding: CGFloat { sizeClass == .regular ? 24 : 16 }
+    private var hasWorkStatus: Bool {
+        !Launcher.jitOn || jit.busy || jit.error != nil || incoming.preparing != nil
+            || store.busy != nil || host.busy != nil || !incoming.forAndroid.isEmpty
+            || (router.androidStarted && !host.isReady)
+            || downloads.jobs.contains(where: { !$0.complete })
+    }
+
     var body: some View {
         NavigationStack(path: $router.library) {
-            List {
-                Section {
-                    JITStatusRow()
-                    if let busy = incoming.preparing { progressRow(busy) }
-                    if let busy = store.busy { progressRow(busy) }
-                    if let busy = host.busy { progressRow(busy) }
-                    runtimeActivity
-                    if downloads.jobs.contains(where: { !$0.complete }) {
-                        Button { router.showDownloads = true } label: {
-                            Label("Downloads", systemImage: "arrow.down.circle")
-                        }
-                    }
-                }
-
-                if allItems.isEmpty {
-                    Section {
-                        VStack(spacing: 14) {
-                            Image(systemName: "square.stack.3d.up.fill")
-                                .font(.system(size: 42, weight: .light))
-                                .foregroundStyle(Color.accentColor)
-                            Text("Your apps, together")
-                                .font(.title2.weight(.semibold))
-                            Text("Import an APK to get started. APK bundles and split APK sets are supported too.")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Button { router.addSomething() } label: {
-                                Label("Import APK", systemImage: "plus")
+            VStack(spacing: 0) {
+                libraryControls
+                    .padding(.horizontal, sidePadding)
+                    .padding(.top, 4)
+                    .padding(.bottom, 14)
+                ScrollView {
+                    LazyVStack(spacing: 11) {
+                        if hasWorkStatus { workStatus }
+                        if allItems.isEmpty {
+                            emptyLibrary
+                        } else if items.isEmpty {
+                            if query.trimmingCharacters(in: .whitespaces).isEmpty {
+                                VStack(spacing: 12) {
+                                    Text("No apps in this filter.").foregroundStyle(.secondary)
+                                    Button("Show All Apps") { router.libraryFilter = .all }
+                                }
+                                .padding(.vertical, 48)
+                            } else {
+                                NoResults(query: query)
                             }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.large)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 28)
-                        .padding(.horizontal, 12)
-                    }
-                } else if items.isEmpty {
-                    Section {
-                        if query.trimmingCharacters(in: .whitespaces).isEmpty {
-                            Text("No apps in this filter.").foregroundStyle(.secondary)
-                            Button("Show All Apps") { router.libraryFilter = .all }
                         } else {
-                            NoResults(query: query)
+                            ForEach(items) { item in
+                                ContainerAppRow(item: item, selected: selectedItemID == item.id,
+                                    select: { selectedItemID = item.id },
+                                    push: { router.library.append($0) })
+                            }
                         }
+                        Text(query.isEmpty && router.libraryFilter == .all
+                             ? "\(items.count) \(items.count == 1 ? "App" : "Apps") in total"
+                             : "\(items.count) of \(allItems.count) apps")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 16)
+                            .padding(.bottom, 24)
                     }
-                } else {
-                    Section {
-                        ForEach(items) { item in
-                            ContainerAppRow(item: item) { router.library.append($0) }
-                        }
-                    } header: {
-                        HStack {
-                            Text("Installed Apps")
-                            Spacer()
-                            Text("\(items.count)")
-                        }
-                    } footer: {
-                        Text("Tap an app for details, or Open to launch it. App settings are in the ••• menu.")
-                    }
+                    .padding(.horizontal, sidePadding)
                 }
+                .huskDismissKeyboardOnScroll()
             }
-            .listStyle(.insetGrouped)
+            .background(Console.page)
             .navigationTitle("Apps")
-            .navigationBarTitleDisplayMode(.large)
-            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search apps")
-            .huskDismissKeyboardOnScroll()
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Menu {
-                        Picker("Sort Apps", selection: $sortRecent) {
-                            Text("Name").tag(false)
-                            Text("Recently Opened").tag(true)
-                        }
-                        Picker("Show", selection: $router.libraryFilter) {
-                            ForEach(LibraryFilter.allCases) { Text($0.title).tag($0) }
-                        }
-                        Divider()
-                        Button { router.showFiles = true } label: { Label("App Files", systemImage: "folder") }
-                        Button { router.showDownloads = true } label: { Label("Downloads", systemImage: "arrow.down.circle") }
-                    } label: {
-                        Image(systemName: "line.3.horizontal.decrease.circle")
-                    }
-                    .accessibilityLabel("Library Options")
-                }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button { router.addSomething() } label: { Image(systemName: "plus") }
-                        .accessibilityLabel("Import APK")
-                }
-            }
+            .huskNavigationBar(hidden: true)
             .libraryDestinations()
         }
+    }
+
+    private var libraryControls: some View {
+        HStack(spacing: 10) {
+            Button { router.addSomething() } label: { controlIcon("plus") }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Import APK")
+            Menu {
+                Picker("Sort Apps", selection: $sortRecent) {
+                    Text("Name").tag(false)
+                    Text("Recently Opened").tag(true)
+                }
+                Picker("Show", selection: $router.libraryFilter) {
+                    ForEach(LibraryFilter.allCases) { Text($0.title).tag($0) }
+                }
+                Divider()
+                Button { jit.showSetup = true } label: {
+                    Label(Launcher.jitOn ? "JIT Enabled" : "JIT Setup", systemImage: "bolt.fill")
+                }
+                Button { router.showFiles = true } label: { Label("App Files", systemImage: "folder") }
+                Button { router.showDownloads = true } label: { Label("Downloads", systemImage: "arrow.down.circle") }
+            } label: { controlIcon("line.3.horizontal.decrease.circle") }
+            .accessibilityLabel("Library Options")
+
+            HStack(spacing: 9) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Search apps", text: $query)
+                    .submitLabel(.search)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                if !query.isEmpty {
+                    Button { query = "" } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                            .frame(minWidth: 32, minHeight: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Clear search")
+                }
+            }
+            .padding(.horizontal, 16)
+            .frame(minHeight: 46)
+            .background(.ultraThinMaterial, in: Capsule())
+            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.1), lineWidth: 1))
+        }
+    }
+
+    private func controlIcon(_ name: String) -> some View {
+        Image(systemName: name)
+            .font(.system(size: 22, weight: .regular))
+            .foregroundStyle(.primary)
+            .frame(width: 46, height: 46)
+            .background(.ultraThinMaterial, in: Circle())
+            .overlay(Circle().strokeBorder(Color.primary.opacity(0.1), lineWidth: 1))
+    }
+
+    private var emptyLibrary: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "square.stack.3d.up.fill")
+                .font(.system(size: 48, weight: .light))
+                .foregroundStyle(Color.accentColor)
+            Text("Your apps, together").font(.title2.weight(.semibold))
+            Text("Import an APK, discover one in Store, or build your own.")
+                .font(.subheadline).foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            Button { router.addSomething() } label: { Label("Import APK", systemImage: "plus") }
+                .buttonStyle(.borderedProminent)
+                .buttonBorderShape(.capsule)
+                .controlSize(.large)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 56)
+        .padding(.horizontal, 24)
+        .background(Console.card, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+    }
+
+    private var workStatus: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if !Launcher.jitOn || jit.busy || jit.error != nil { JITStatusRow() }
+            if let busy = incoming.preparing { progressRow(busy) }
+            if let busy = store.busy { progressRow(busy) }
+            if let busy = host.busy { progressRow(busy) }
+            runtimeActivity
+            if downloads.jobs.contains(where: { !$0.complete }) {
+                Button { router.showDownloads = true } label: {
+                    Label("Downloads", systemImage: "arrow.down.circle")
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18)
+        .background(Console.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 
     @ViewBuilder
@@ -302,60 +357,102 @@ struct LibraryScreen: View {
 
 private struct ContainerAppRow: View {
     let item: LibraryItem
+    let selected: Bool
+    let select: () -> Void
     let push: (LibraryRoute) -> Void
     @State private var confirmRemove = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.colorScheme) private var colorScheme
 
     private var subtitle: String {
-        switch item {
-        case .game(let app): return app.packageName ?? "Android app"
-        case .app(let package): return package.name
+        if case .app(let package) = item, let version = package.version, !version.isEmpty {
+            return "\(version) · \(package.name)"
         }
+        return item.packageName ?? "Android app"
+    }
+
+    /// Stable tints give each app its own row without decoding full icons during layout.
+    private var tint: Color {
+        let palette: [Color] = [.cyan, .mint, .blue, .green, .orange, .yellow, .indigo, .pink, .red, .purple]
+        let value = (item.packageName ?? item.id).utf8.reduce(UInt64(14695981039346656037)) {
+            ($0 ^ UInt64($1)) &* 1099511628211
+        }
+        return selected ? .accentColor : palette[Int(value % UInt64(palette.count))]
+    }
+
+    private var details: some View {
+        Button {
+            select()
+            push(item.route)
+        } label: {
+            HStack(spacing: 14) {
+                ItemIcon(item: item, size: sizeClass == .regular ? 64 : 56)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.title)
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
+                    Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Text(item.usedText ?? (item.runsInAndroid ? "Compatibility Runtime" : "Translation Layer"))
+                        .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(item.title), details")
+        .accessibilityHint("Touch and hold for app settings and actions")
+    }
+
+    private var run: some View {
+        Button {
+            select()
+            Launcher.play(item, push: push)
+        } label: {
+            Text("Run")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 22)
+                .frame(minHeight: 44)
+                .background(tint.opacity(colorScheme == .dark ? 0.3 : 0.2), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Run \(item.title)")
     }
 
     var body: some View {
-        HStack(spacing: 12) {
-            Button { push(item.route) } label: {
-                HStack(spacing: 12) {
-                    ItemIcon(item: item, size: 56)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(item.title).font(.headline).foregroundStyle(.primary)
-                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
-                        Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                        if let used = item.usedText {
-                            Text(used).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                        }
-                    }
-                    Spacer(minLength: 0)
-                }
-                .contentShape(Rectangle())
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 14) {
+                details
+                if !dynamicTypeSize.isAccessibilitySize { run }
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("\(item.title), details")
-
-            if !dynamicTypeSize.isAccessibilitySize {
-                Button { Launcher.play(item, push: push) } label: {
-                    Text("Open").font(.subheadline.weight(.semibold))
-                }
-                .buttonStyle(.bordered)
-                .buttonBorderShape(.capsule)
-                .accessibilityLabel("Open \(item.title)")
-            }
-
-            Menu {
-                LibraryItemActions(item: item, showsDetails: false, push: push) { confirmRemove = true }
-            } label: {
-                Image(systemName: "ellipsis.circle")
-                    .font(.title3)
-                    .frame(minWidth: 32, minHeight: 44)
-            }
-            .accessibilityLabel("Settings and actions for \(item.title)")
+            if dynamicTypeSize.isAccessibilitySize { run }
         }
-        .padding(.vertical, 6)
+        .padding(sizeClass == .regular ? 18 : 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(Console.card)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .fill(tint.opacity(selected ? 0.38 : colorScheme == .dark ? 0.13 : 0.09))
+                }
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .strokeBorder(Color.primary.opacity(selected ? 0.12 : 0.035), lineWidth: 1)
+        }
         .contextMenu {
             LibraryItemActions(item: item, showsDetails: true, push: push) { confirmRemove = true }
         }
+        .accessibilityAction(named: Text("App Settings")) {
+            if case .game(let app) = item { push(.gameSettings(app.id)) }
+            else { push(item.route) }
+        }
         .removeItemDialog(item, isPresented: $confirmRemove)
+        .accessibilityIdentifier("container.app." + item.id)
     }
 }
 

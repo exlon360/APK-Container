@@ -1,203 +1,192 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import Foundation
+import Combine
 
-// MARK: - Internal Model
-struct AppSource: Identifiable, Equatable {
-    let name: String
-    let identifier: String
-    var apps: [SourceApp]
-    var id: String { identifier }
-}
-
-struct SourceApp: Identifiable, Equatable {
-    let name: String
-    let bundleIdentifier: String
-    let version: String
-    let downloadURL: String
-    let iconURL: String
-    let localizedDescription: String
-    var id: String { bundleIdentifier }
-}
-
-// MARK: - F-Droid v1 Schema
-private struct FDroidIndex: Codable {
-    let repo: FDroidRepo
-    let apps: [FDroidApp]
-    let packages: [String: [FDroidPackage]]
-}
-private struct FDroidRepo: Codable { let name: String; let address: String }
-private struct FDroidApp: Codable {
-    let packageName: String
-    let name: String?
-    let summary: String?
-    let description: String?
-    let icon: String?
-    let localized: [String: FDroidLocalized]?
-}
-private struct FDroidLocalized: Codable {
-    let name: String?
-    let summary: String?
-    let description: String?
-    let icon: String?
-}
-private struct FDroidPackage: Codable { let apkName: String; let versionName: String }
-
-// MARK: - Husk Simple Schema
-private struct HuskSimpleSource: Codable {
-    let name: String; let identifier: String; let apps: [SourceAppCodable]
-}
-private struct SourceAppCodable: Codable {
-    let name, bundleIdentifier, version, downloadURL, iconURL, localizedDescription: String
-}
-
-// MARK: - Manager
+/// Saved repositories, a usable offline catalog, and verified APK handoff to the
+/// existing import chooser. No repository can invoke a shell or start an app.
 @MainActor
 final class SourceManager: ObservableObject {
     static let shared = SourceManager()
-
-    @Published var sources: [AppSource] = []
-    @Published var loadingSources: Set<String> = Set<String>()
-    @Published var fetchErrors: [String: String] = [String: String]()
-    @Published var downloadProgress: [String: Double] = [String: Double]()
-
-    var isLoading: Bool { !loadingSources.isEmpty }
-
-    @Published var sourceURLs: [String] = [
-        "https://f-droid.org/repo/index-v1.json"
-    ] {
+    @Published private(set) var sources: [AppSource] = []
+    @Published private(set) var loadingSources: Set<String> = []
+    @Published private(set) var fetchErrors: [String: String] = [:]
+    @Published private(set) var downloadProgress: [String: Double] = [:]
+    @Published private(set) var downloadErrors: [String: String] = [:]
+    @Published private(set) var disabledSources: Set<String> = []
+    @Published var problem: String?
+    @Published var sourceURLs: [String] = [] {
         didSet {
-            UserDefaults.standard.set(sourceURLs, forKey: "HuskSourceURLs")
+            guard !hydrating else { return }
+            defaults.set(sourceURLs, forKey: "HuskSourceURLs")
+            sources.removeAll { !sourceURLs.contains($0.identifier) }
+            disabledSources = disabledSources.intersection(sourceURLs)
+            defaults.set(Array(disabledSources), forKey: "apkcontainer.repositories.disabled")
+            saveCache()
         }
     }
+    private var hydrating = true
+    private let defaults: UserDefaults
+    private let cacheURL: URL
+    private var downloads: [String: Task<Void, Never>] = [:]
+    private var attempts: [String: Date] = [:]
+    var isLoading: Bool { !loadingSources.isEmpty }
+    var enabledURLs: [String] { sourceURLs.filter { !disabledSources.contains($0) } }
+    var enabledSources: [AppSource] {
+        sources.filter { enabledURLs.contains($0.identifier) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+    private static var defaultCacheURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Repositories/catalog.json")
+    }
+    private static var decoder: JSONDecoder { let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601; return decoder }
 
-    private let session: URLSession = {
-        let cfg = URLSessionConfiguration.default
-        cfg.timeoutIntervalForRequest = 120
-        cfg.timeoutIntervalForResource = 300
-        return URLSession(configuration: cfg)
-    }()
-
-    init() {
-        if let saved = UserDefaults.standard.stringArray(forKey: "HuskSourceURLs"), !saved.isEmpty {
-            sourceURLs = saved
+    init(defaults: UserDefaults = .standard, cacheURL: URL? = nil, seedCatalog: Data? = nil) {
+        self.defaults = defaults
+        self.cacheURL = cacheURL ?? Self.defaultCacheURL
+        var saved = defaults.stringArray(forKey: "HuskSourceURLs") ?? []
+        if !defaults.bool(forKey: "apkcontainer.repositories.seeded.v1") {
+            for seed in RepositoryCatalog.seeds where !saved.contains(where: { (try? RepositoryCatalog.canonicalURL($0).lowercased()) == seed.url.lowercased() }) { saved.append(seed.url) }
+            defaults.set(true, forKey: "apkcontainer.repositories.seeded.v1")
         }
+        sourceURLs = saved
+        defaults.set(saved, forKey: "HuskSourceURLs")
+        disabledSources = Set(defaults.stringArray(forKey: "apkcontainer.repositories.disabled") ?? []).intersection(saved)
+        attempts = (defaults.dictionary(forKey: "apkcontainer.repositories.attempts") ?? [:]).compactMapValues {
+            ($0 as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue) }
+        }
+        if let data = try? Data(contentsOf: self.cacheURL), let cached = try? Self.decoder.decode([AppSource].self, from: data) {
+            sources = cached.filter { saved.contains($0.identifier) }
+        }
+        // These are actual release snapshots, including their published digests.
+        // Refreshing replaces them; they are not compatibility endorsements.
+        let bundled = seedCatalog ?? Bundle.main.url(forResource: "RepositorySeedCatalog", withExtension: "json").flatMap { try? Data(contentsOf: $0) }
+        if let data = bundled, let seeds = try? Self.decoder.decode([AppSource].self, from: data) {
+            for source in seeds where saved.contains(source.identifier) && !sources.contains(where: { $0.identifier == source.identifier }) {
+                sources.append(source)
+            }
+        }
+        hydrating = false
+        saveCache()
     }
 
-    // Fetch everything (called on first appear / manual refresh)
-    func fetchSources() async {
-        for urlString in sourceURLs {
-            if !sources.contains(where: { $0.identifier == urlString }) || loadingSources.isEmpty {
-                await fetchSource(urlString: urlString)
+    func isEnabled(_ url: String) -> Bool { !disabledSources.contains(url) }
+    func setEnabled(_ enabled: Bool, url: String) {
+        if enabled { disabledSources.remove(url) } else { disabledSources.insert(url) }
+        defaults.set(Array(disabledSources), forKey: "apkcontainer.repositories.disabled")
+        if enabled { Task { await refreshIfNeeded() } }
+    }
+    func refreshIfNeeded() async { await refresh(force: false) }
+    func fetchSources() async { await refresh(force: true) }
+    private func refresh(force: Bool) async {
+        let now = Date()
+        let wanted = enabledURLs.filter { url in
+            guard !loadingSources.contains(url) else { return false }
+            let last = max(attempts[url] ?? .distantPast, sources.first(where: { $0.identifier == url })?.fetchedAt ?? .distantPast)
+            return force || now.timeIntervalSince(last) >= 15 * 60
+        }
+        // At most three concurrent requests, and at most one request per source.
+        for start in stride(from: 0, to: wanted.count, by: 3) {
+            let batch = wanted[start..<min(start + 3, wanted.count)]
+            await withTaskGroup(of: Void.self) { group in
+                for url in batch { group.addTask { await self.fetchSource(urlString: url) } }
             }
         }
     }
-
-    // Add a new source and fetch ONLY that one
+    func addRepository(_ raw: String) async throws {
+        let url = try RepositoryCatalog.canonicalURL(raw)
+        guard !sourceURLs.contains(where: { $0.lowercased() == url.lowercased() }) else {
+            throw RepositoryCatalog.Failure.message("That repository is already in your list.")
+        }
+        sourceURLs.append(url)
+        await fetchSource(urlString: url)
+    }
     func addSource(urlString: String) async {
-        guard !sourceURLs.contains(urlString) else { return }
-        sourceURLs.append(urlString)
-        await fetchSource(urlString: urlString)
+        do { try await addRepository(urlString) } catch { problem = error.localizedDescription }
     }
-
-    // Fetch a single source by URL
+    func restoreDefaults() {
+        for seed in RepositoryCatalog.seeds where !sourceURLs.contains(where: { $0.lowercased() == seed.url.lowercased() }) { sourceURLs.append(seed.url) }
+        Task { await refreshIfNeeded() }
+    }
     func fetchSource(urlString: String) async {
-        guard let url = URL(string: urlString) else {
-            fetchErrors[urlString] = "Invalid URL"
-            return
-        }
-
+        guard !loadingSources.contains(urlString), sourceURLs.contains(urlString), isEnabled(urlString) else { return }
         loadingSources.insert(urlString)
+        attempts[urlString] = Date()
+        defaults.set(attempts.mapValues(\.timeIntervalSince1970), forKey: "apkcontainer.repositories.attempts")
         fetchErrors.removeValue(forKey: urlString)
-
         defer { loadingSources.remove(urlString) }
-
         do {
-            let (data, _) = try await session.data(from: url)
-
-            // Try F-Droid v1 format
-            if let fdroid = try? JSONDecoder().decode(FDroidIndex.self, from: data) {
-                let baseURL = fdroid.repo.address
-                var apps: [SourceApp] = []
-                for fApp in fdroid.apps {
-                    guard let pkgs = fdroid.packages[fApp.packageName], let latest = pkgs.first else { continue }
-                    let loc = fApp.localized?["en-US"] ?? fApp.localized?.values.first
-                    let appName = fApp.name ?? loc?.name ?? fApp.packageName
-                    let appSummary = fApp.summary ?? loc?.summary ?? fApp.description ?? loc?.description ?? ""
-                    let appIcon = fApp.icon ?? loc?.icon
-                    let iconURL = appIcon.map { "\(baseURL)/icons/\($0)" } ?? ""
-                    
-                    apps.append(SourceApp(
-                        name: appName,
-                        bundleIdentifier: fApp.packageName,
-                        version: latest.versionName,
-                        downloadURL: "\(baseURL)/\(latest.apkName)",
-                        iconURL: iconURL,
-                        localizedDescription: appSummary
-                    ))
-                }
-                apps.sort { $0.name.lowercased() < $1.name.lowercased() }
-                let source = AppSource(name: fdroid.repo.name, identifier: urlString, apps: apps)
-                upsert(source: source)
+            let canonical = try RepositoryCatalog.canonicalURL(urlString)
+            var request = URLRequest(url: URL(string: canonical)!)
+            request.setValue("APK-Container/1.0", forHTTPHeaderField: "User-Agent")
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            if let etag = sources.first(where: { $0.identifier == urlString })?.etag { request.setValue(etag, forHTTPHeaderField: "If-None-Match") }
+            let response = try await RepositoryTransfer().download(request, maximum: 32 * 1024 * 1024)
+            if response.status == 304 {
+                if let index = sources.firstIndex(where: { $0.identifier == urlString }) { sources[index].fetchedAt = Date(); saveCache() }
+                return
             }
-            // Fallback: Husk simple format
-            else if let simple = try? JSONDecoder().decode(HuskSimpleSource.self, from: data) {
-                let apps = simple.apps.map {
-                    SourceApp(name: $0.name, bundleIdentifier: $0.bundleIdentifier,
-                              version: $0.version, downloadURL: $0.downloadURL,
-                              iconURL: $0.iconURL, localizedDescription: $0.localizedDescription)
-                }
-                let source = AppSource(name: simple.name, identifier: urlString, apps: apps)
-                upsert(source: source)
-            } else {
-                fetchErrors[urlString] = "Unrecognized source format"
-                HuskLog.log("sources", "Unrecognized format at \(urlString)")
-            }
+            guard let file = response.file else { throw RepositoryCatalog.Failure.message("The repository returned no catalog.") }
+            defer { try? FileManager.default.removeItem(at: file) }
+            let data = try Data(contentsOf: file)
+            var source = try RepositoryCatalog.parse(data, sourceURL: canonical)
+            // Keep the saved identity for legacy index URLs, including their exact spelling.
+            source = AppSource(name: source.name, identifier: urlString, apps: source.apps, fetchedAt: Date(), etag: response.etag)
+            guard sourceURLs.contains(urlString) else { return }
+            if let index = sources.firstIndex(where: { $0.identifier == urlString }) { sources[index] = source }
+            else { sources.append(source) }
+            saveCache()
+        } catch is CancellationError {
         } catch {
-            fetchErrors[urlString] = error.localizedDescription
-            HuskLog.log("sources", "Failed to fetch \(urlString): \(error)")
+            if !Task.isCancelled, sourceURLs.contains(urlString) { fetchErrors[urlString] = String(error.localizedDescription.prefix(300)) }
+            HuskLog.log("repositories", "Could not refresh \(RepositoryCatalog.name(for: urlString)): \(error.localizedDescription)")
         }
     }
-
     func removeSource(urlString: String) {
         sourceURLs.removeAll { $0 == urlString }
-        sources.removeAll { $0.identifier == urlString }
         fetchErrors.removeValue(forKey: urlString)
+        attempts.removeValue(forKey: urlString)
     }
-
-    private func upsert(source: AppSource) {
-        if let idx = sources.firstIndex(where: { $0.identifier == source.identifier }) {
-            sources[idx] = source
-        } else {
-            sources.append(source)
-        }
+    private func saveCache() {
+        do {
+            let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+            let data = try encoder.encode(sources)
+            try FileManager.default.createDirectory(at: cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: cacheURL, options: .atomic)
+        } catch { HuskLog.log("repositories", "Could not save catalog cache: \(error.localizedDescription)") }
     }
-
-    // MARK: - APK Download + Install
 
     func downloadAndInstall(app: SourceApp) {
-        guard let url = URL(string: app.downloadURL) else { return }
-        downloadProgress[app.bundleIdentifier] = 0.01
-        HuskLog.log("sources", "Downloading \(app.name)")
-
-        let task = URLSession.shared.downloadTask(with: url) { localURL, _, error in
-            Task { @MainActor in
-                self.downloadProgress.removeValue(forKey: app.bundleIdentifier)
-                guard let localURL, error == nil else {
-                    HuskLog.log("sources", "Download failed: \(String(describing: error))")
-                    return
-                }
-                let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-                let downloadDir = docs.appendingPathComponent("Downloaded_APKs")
-                try? FileManager.default.createDirectory(at: downloadDir, withIntermediateDirectories: true, attributes: nil)
-                let dest = downloadDir.appendingPathComponent("\(app.bundleIdentifier)-\(app.version).apk")
-                try? FileManager.default.removeItem(at: dest)
-                if (try? FileManager.default.moveItem(at: localURL, to: dest)) != nil {
-                    AndroidHost.shared.install([dest])
-                }
+        guard downloads[app.id] == nil else { return }
+        downloadErrors.removeValue(forKey: app.id)
+        downloadProgress[app.id] = 0
+        downloads[app.id] = Task {
+            defer { downloads.removeValue(forKey: app.id); downloadProgress.removeValue(forKey: app.id) }
+            var downloaded: URL?
+            do {
+                guard let url = RepositoryCatalog.httpsURL(app.downloadURL) else { throw RepositoryCatalog.Failure.message("The APK download must use HTTPS.") }
+                var request = URLRequest(url: url)
+                request.setValue("APK-Container/1.0", forHTTPHeaderField: "User-Agent")
+                let response = try await RepositoryTransfer().download(request, maximum: 512 * 1024 * 1024, progress: { value in
+                    Task { @MainActor in
+                        if self.downloads[app.id] != nil { self.downloadProgress[app.id] = value }
+                    }
+                })
+                guard let file = response.file else { throw RepositoryCatalog.Failure.message("The repository returned no APK.") }
+                downloaded = file
+                try Task.checkCancellation()
+                try await Task.detached(priority: .utility) { try RepositoryArtifact.verify(file, expectedSHA256: app.sha256, expectedSize: app.downloadSize) }.value
+                try Task.checkCancellation()
+                // IncomingFiles copies into its own staging area and lets the user choose
+                // translation-layer or Android import. It never guesses an app activity.
+                IncomingFiles.shared.receive(file)
+                downloaded = nil // Retained cache until the asynchronous importer has copied it.
+            } catch is CancellationError {
+            } catch {
+                if !Task.isCancelled { downloadErrors[app.id] = String(error.localizedDescription.prefix(300)) }
             }
+            if let downloaded { try? FileManager.default.removeItem(at: downloaded) }
         }
-        task.progress.observe(\.fractionCompleted) { progress, _ in
-            Task { @MainActor in self.downloadProgress[app.bundleIdentifier] = progress.fractionCompleted }
-        }
-        task.resume()
     }
+    func cancelDownload(_ app: SourceApp) { downloads[app.id]?.cancel() }
 }

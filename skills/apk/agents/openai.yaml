@@ -1,0 +1,4 @@
+interface:
+  display_name: "APK Container"
+  short_description: "Pair your Mac and build apps for APK Container"
+  default_prompt: "Use $apk to pair APK Container with this Mac and prepare its app-building workspace."

@@ -90,10 +90,19 @@ enum HuskAppIcon: String, CaseIterable, Identifiable {
 }
 
 
-/// Native apps and settings.
+/// The container's native destinations. Apps and Build stay beside one another.
 enum HuskTab: String, CaseIterable, Identifiable {
-    case library
-    case settings
+    case library, build, myApps, repositories, store, settings
 
     var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .library: return "Apps"
+        case .build: return "Build"
+        case .myApps: return "My Apps"
+        case .repositories: return "Repositories"
+        case .store: return "Store"
+        case .settings: return "Settings"
+        }
+    }
 }
