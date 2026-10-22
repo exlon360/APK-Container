@@ -98,6 +98,13 @@ rm -rf "$app_path"
 rm -f "$zip_path"
 /usr/bin/ditto "$bundle" "$app_path"
 /usr/bin/ditto "$stage/APKContainer-Bridge-preview9.zip" "$zip_path"
-/usr/bin/codesign --verify --deep --strict "$app_path"
+# Document-provider folders can add Finder metadata after a copy. Clear only
+# this newly created output, then validate the actual shipped archive outside
+# the provider so that packaging does not depend on its metadata timing.
+/usr/bin/xattr -cr "$app_path"
+mkdir -p "$stage/archive-verification"
+/usr/bin/ditto -x -k "$zip_path" "$stage/archive-verification"
+/usr/bin/codesign --verify --deep --strict "$stage/archive-verification/APK Container Bridge.app"
+"$stage/archive-verification/APK Container Bridge.app/Contents/MacOS/APKContainerBridge" --smoke-test
 /usr/bin/shasum -a 256 "$zip_path"
 printf 'App: %s\nArchive: %s\n' "$app_path" "$zip_path"
