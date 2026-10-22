@@ -308,7 +308,7 @@ struct OnboardingView: View {
 
     /// What the JIT page says is already in place, if anything.
     private var jitState: String? {
-        if JITBootstrap.ready { return "JIT is on." }
+        if JITBootstrap.available { return "JIT is on." }
         if jit.method == .stikDebug { return "APK Container will use StikDebug." }
         if jit.method == .trollStore { return "APK Container will use TrollStore." }
         switch jit.pairingSource {

@@ -177,6 +177,7 @@
 		D41BB1A7358925EB538DF2F1 /* AppSessionControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8A48B6AC3DCE0A9A02E6D24 /* AppSessionControls.swift */; };
 		D61EF536158A8495F2B0CE79 /* JITSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5894E74BA308222C01AEE311 /* JITSetupView.swift */; };
 		D6E9F96BE6AF7C985488D030 /* VirtualPad.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F570EB6EAB321272B32955C /* VirtualPad.swift */; };
+		D8FD3F7F1B83CECC05FC7CEB /* JITStartupPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = B507512B5427C4161F283D64 /* JITStartupPolicy.swift */; };
 		D948883B3C09C9D89EB27927 /* RuntimeDisplayDensity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 738FE2CB221BBCF93ACBB4CB /* RuntimeDisplayDensity.swift */; };
 		DD78A64F53CD2C615EB004B3 /* LICENSE-idevice-MIT.txt in Resources */ = {isa = PBXBuildFile; fileRef = A45038B8E06A02311695BE90 /* LICENSE-idevice-MIT.txt */; };
 		DFF5B4345D574C8ECC39122F /* SaveBackup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D01B6F6F9B57E73E4B319F2 /* SaveBackup.swift */; };
@@ -443,6 +444,7 @@
 		AF921E3E1F855C07C3E5D2F0 /* husk-jit-arena.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-jit-arena.c"; sourceTree = "<group>"; };
 		B08C946B21AA94C98AF6D394 /* husk-tl-dvm-web.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "husk-tl-dvm-web.m"; sourceTree = "<group>"; };
 		B318C3E235A47EA295C46433 /* husk-tl-nativeactivity.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "husk-tl-nativeactivity.h"; sourceTree = "<group>"; };
+		B507512B5427C4161F283D64 /* JITStartupPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JITStartupPolicy.swift; sourceTree = "<group>"; };
 		B74F9AA42414905593B347BA /* husk-jit.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "husk-jit.js"; sourceTree = "<group>"; };
 		B76CE6F39722749AA0027959 /* husk-tl-jni-cocos.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-jni-cocos.c"; sourceTree = "<group>"; };
 		B9BADA89A8FEF9F2D794BFCF /* husk-tl-dvm-gl.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "husk-tl-dvm-gl.h"; sourceTree = "<group>"; };
@@ -605,6 +607,7 @@
 				EF6C1917FEC08090833D9CF0 /* JITPairing.swift */,
 				83275C7FEF2DEB950028D914 /* JITSetup.swift */,
 				5894E74BA308222C01AEE311 /* JITSetupView.swift */,
+				B507512B5427C4161F283D64 /* JITStartupPolicy.swift */,
 				6829A7DBA27EDCC20D8C17AD /* Launcher.swift */,
 				2470C9D4EBE84F890D35A354 /* MassTest.swift */,
 				79E4865C5FE44ADD210A4917 /* OnboardingView.swift */,
@@ -1152,6 +1155,7 @@
 				E7095C2C706335203227319A /* JITPairing.swift in Sources */,
 				70AF7E999105691EB51B54FD /* JITSetup.swift in Sources */,
 				D61EF536158A8495F2B0CE79 /* JITSetupView.swift in Sources */,
+				D8FD3F7F1B83CECC05FC7CEB /* JITStartupPolicy.swift in Sources */,
 				538ED3B97F9BC9511F1386E7 /* Launcher.swift in Sources */,
 				2BB97B7AE3D1994ABB4A67A0 /* MassTest.swift in Sources */,
 				D1DB4D94478AB7DD95E1A24E /* OnboardingView.swift in Sources */,

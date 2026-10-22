@@ -140,10 +140,22 @@ enum JITBootstrap {
     /// The one try at making the region without a debugger has been made (it is not repeated: the answer will not change).
     nonisolated(unsafe) static private var selfGrantTried = false
 
-    /// Whether Husk has JIT now: a debugger marked it, or the region is already held. Before iOS 26 this tries, once, to make
+    static var isHosted: Bool {
+        JITStartupPolicy.isHosted(environment: ProcessInfo.processInfo.environment)
+    }
+
+    /// Observational only. Safe in view bodies and during a passive host launch:
+    /// no executable mapping, instruction probe, or debugger trap is issued.
+    static var available: Bool {
+        debuggedFlag || memoryPrepared
+    }
+
+    static var memoryPrepared: Bool { prewarmed || isLive || mapJITResult == true }
+
+    /// An action-time check, never a display predicate. Before iOS 26 this tries, once, to make
     /// the region itself, which is all TrollStore and jailbroken devices need. Cheap after the first call, and logs nothing.
     static var ready: Bool {
-        if debuggedFlag || prewarmed || isLive { return true }
+        if available { return true }
         guard canGrantOwnJIT, !selfGrantTried else { return false }
         return prewarm()
     }

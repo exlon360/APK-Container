@@ -11,7 +11,7 @@ struct JITCard: View {
     /// One line instead of a card: for the library, where it sits above the games rather than being the page.
     var compact = false
 
-    private var isOn: Bool { JITBootstrap.ready }
+    private var isOn: Bool { JITBootstrap.available }
 
     /// The way the card offers: StikJIT where APK Container has it (iOS 26 and later), and otherwise whatever this device has -- TrollStore, a
     /// jailbreak -- since StikJIT cannot run on an iOS before 26.
@@ -107,8 +107,14 @@ struct JITCard: View {
                 .font(.title2)
                 .foregroundStyle(.green)
             VStack(alignment: .leading, spacing: 2) {
-                Text("JIT is on").font(.headline)
-                Text("Games and Android can run.").font(.subheadline).foregroundStyle(.secondary)
+                Text(JITBootstrap.memoryPrepared ? "JIT is on" : "Debugger attached").font(.headline)
+                Text(JITBootstrap.memoryPrepared ? "Games and Android can run."
+                     : "Executable memory is prepared when you launch an app.")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                if !JITBootstrap.memoryPrepared {
+                    Button("Prepare JIT Now") { jit.enable() }
+                        .disabled(jit.busy)
+                }
             }
             Spacer(minLength: 0)
         }

@@ -18,6 +18,8 @@ struct ContentView: View {
     @State private var visitedTabs: Set<HuskTab> = [.library]
     /// A user-requested app launch or import waiting for JIT or runtime installation.
     @State private var runtimeRequested = false
+    /// A failed automatic start stays suppressed for this entire process.
+    @State private var autoStartSuppressed = false
     @State private var showLogs = false
     /// True while the guest's own screen is being shown instead of the library.
     /// Starts false: the tab UI is the home screen, and the guest -- including
@@ -187,7 +189,10 @@ struct ContentView: View {
         .onChange(of: scenePhase) { phase in
             // StikDebug relaunches Husk after attaching, so returning to the
             // foreground is the moment worth re-checking, not first launch.
-            if phase == .active { evaluate() }
+            if phase == .active {
+                jit.returnedToForeground()
+                evaluate()
+            }
         }
     }
 
@@ -267,8 +272,6 @@ struct ContentView: View {
     }
 
     private func evaluate() {
-        // Before anything else wants JIT: the setting that turns it on as Husk opens.
-        jit.enableAtLaunchIfAsked()
         try? guest.prepareFirmware()
         guest.refresh()
         if AutoStart.readyAtLaunch == nil { AutoStart.readyAtLaunch = guest.state == .ready }
@@ -279,20 +282,44 @@ struct ContentView: View {
         // network round trip, and nothing on this screen should wait for it.
         Task { await guest.checkForUpdates() }
 
+        let requestedRuntime = runtimeRequested || !incoming.forAndroid.isEmpty || router.pendingAndroidLaunch != nil
+        let automaticStartEligible = Onboarding.autoStart && !started && !showOnboarding
+            && guest.state == .ready && AutoStart.readyAtLaunch == true
+        // Consult the previous failure BEFORE a debugger trap. Otherwise the
+        // trap can hang again before the recovery marker is ever inspected.
+        if automaticStartEligible, !autoStartSuppressed, AutoStart.lastOneDied() {
+            autoStartSuppressed = true
+            HuskLog.log("ui", "previous automatic Android start did not finish; keeping the library open")
+        }
+        let automaticStart = automaticStartEligible && !autoStartSuppressed
+        guard JITStartupPolicy.permitsPreparation(isHosted: JITBootstrap.isHosted,
+                                                  runtimeRequested: requestedRuntime,
+                                                  explicitJITRequested: jit.preparationRequested,
+                                                  automaticStart: automaticStart) else {
+            HuskLog.log("ui", "hosted library ready; JIT preparation waits for an app launch or explicit JIT action")
+            return
+        }
+
+        let trackingAutomaticStart = automaticStart && !requestedRuntime
+        if trackingAutomaticStart { AutoStart.begin() }
+        defer {
+            if trackingAutomaticStart && !started { AutoStart.end() }
+        }
+        jit.enableAtLaunchIfAsked()
         if !JITBootstrap.ready {
             HuskLog.log("ui", "no JIT yet; waiting for a debugger")
             return
         }
 
-        // Claim the JIT region now, on the first foreground pass after the debugger
-        // attaches, while it is still running. Waiting for the Start button means
-        // iOS has often suspended the debugger, causing unserviced brk freezes.
-        // After the first call this is a no-op, and on success it also detaches the debugger.
+        // Preserve early allocation after an explicit JIT handoff, before a
+        // long download can suspend StikDebug. A host's inherited debugger flag
+        // alone is not permission to trap before the native library appears.
+        jit.consumePreparationRequest()
         JITBootstrap.prewarm()
 
         // Resume a requested app/import after installation or JIT attachment.
         if !started, !showOnboarding, guest.state == .ready,
-           runtimeRequested || !incoming.forAndroid.isEmpty || router.pendingAndroidLaunch != nil {
+           requestedRuntime {
             start()
             return
         }
@@ -316,15 +343,10 @@ struct ContentView: View {
             HuskLog.log("ui", "Android was installed in this run; not starting it on its own (press Start)")
             return
         }
-        guard !AutoStart.lastOneDied() else {
-            HuskLog.log("ui", "APK Container closed while starting Android on launch last time; not starting it on its own this time")
-            return
-        }
+        guard !autoStartSuppressed else { return }
         HuskLog.log("ui", "starting Android on launch")
         booting = true
-        AutoStart.begin()
         start()
-        if !started { AutoStart.end() }
     }
 
     /// Start the guest from the library, without leaving it.
@@ -690,6 +712,7 @@ struct ShareSheet: UIViewControllerRepresentable {
 enum AutoStart {
     /// Whether the guest was ready on the first look in this process; nil before it.
     nonisolated(unsafe) static var readyAtLaunch: Bool?
+    nonisolated(unsafe) private static var generation: UInt64 = 0
 
     private static var marker: String {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("husk-autostart-pending").path
@@ -704,9 +727,18 @@ enum AutoStart {
 
     /// Marks an automatic start; the mark goes once QEMU has been running for a minute.
     static func begin() {
+        generation &+= 1
+        let attempt = generation
         FileManager.default.createFile(atPath: marker, contents: Data())
-        DispatchQueue.main.asyncAfter(deadline: .now() + 60) { end() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
+            // An earlier no-JIT attempt must not clear a later start's marker.
+            guard generation == attempt else { return }
+            end()
+        }
     }
 
-    static func end() { try? FileManager.default.removeItem(atPath: marker) }
+    static func end() {
+        generation &+= 1
+        try? FileManager.default.removeItem(atPath: marker)
+    }
 }

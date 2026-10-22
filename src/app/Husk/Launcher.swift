@@ -111,7 +111,7 @@ enum Launcher {
         }
     }
 
-    static var jitOn: Bool { JITBootstrap.ready }
+    static var jitOn: Bool { JITBootstrap.available }
 
     /// Play or open an item: its page, told to start the game as soon as it is up (Android apps just open their page).
     static func play(_ item: LibraryItem, push: (LibraryRoute) -> Void) {

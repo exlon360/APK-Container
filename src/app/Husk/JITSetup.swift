@@ -127,6 +127,15 @@ final class JITCoordinator: ObservableObject {
     /// Bumped each time the built-in helper attaches. APK Container stays in the
     /// foreground for that, so nothing else tells ContentView to claim the region.
     @Published private(set) var attachGeneration = 0
+    private var preparationIntent = JITPreparationIntent()
+    var preparationRequested: Bool { preparationIntent.pending }
+
+    func consumePreparationRequest() { preparationIntent.consume() }
+    func returnedToForeground() {
+        // TrollStore can foreground us before its asynchronous attach finishes.
+        guard !busy else { return }
+        preparationIntent.returnedToForeground(hasJIT: JITBootstrap.available)
+    }
 
     var hasPairing: Bool { pairingSource != nil }
 
@@ -172,6 +181,9 @@ final class JITCoordinator: ObservableObject {
     static var trollStoreAuto: Bool { UserDefaults.standard.object(forKey: trollStoreAutoKey) as? Bool ?? true }
 
     func enableAtLaunchIfAsked() {
+        // The built-in helper is unavailable in LiveContainer. In particular,
+        // do not call the action-time `ready` probe just to discover that.
+        guard !JITBootstrap.isHosted else { return }
         if !autoTried, JITBootstrap.isInstalledWithTrollStore, Self.trollStoreAuto {
             autoTried = true
             guard !JITBootstrap.ready else { return }
@@ -193,30 +205,47 @@ final class JITCoordinator: ObservableObject {
     }
 
     func enable() {
-        guard !JITBootstrap.ready else { return }
+        preparationIntent.request()
         error = nil
         connectionProblem = nil
+        if JITBootstrap.ready {
+            // An explicit Enable still needs to claim memory when only the
+            // debugger flag is set; no foreground transition will notify us.
+            attachGeneration += 1
+            return
+        }
         switch resolvedMethod {
         case .automatic:
+            preparationIntent.cancel()
             assertionFailure("Automatic must resolve to a concrete JIT method")
         case .stikDebug:
-            if !JITBootstrap.requestAttach(), !JITBootstrap.requestTrollStoreAttach() {
+            if JITBootstrap.requestAttach() {
+                preparationIntent.handedOff()
+            } else if JITBootstrap.requestTrollStoreAttach() {
+                preparationIntent.handedOff()
+                awaitTrollStore()
+            } else {
                 error = "StikDebug is not installed. Install it, or set up Built-in StikJIT."
                 showSetup = true
+                preparationIntent.cancel()
             }
         case .trollStore:
             if JITBootstrap.requestTrollStoreAttach() {
+                preparationIntent.handedOff()
                 awaitTrollStore()
             } else {
+                preparationIntent.cancel()
                 error = "TrollStore could not be opened. Install APK Container through TrollStore, or choose another method."
                 showSetup = true
             }
         case .jailbreak:
+            preparationIntent.cancel()
             // Nothing to ask: a jailbreak marks an app as debugged as it opens, if it has been told to. Say what to turn on.
             error = "Turn on Allow JIT in Apps in Dopamine's settings, then open APK Container again."
             showSetup = true
         case .builtIn:
             guard HuskBuiltInJIT.isAvailable, hasPairing else {
+                preparationIntent.cancel()
                 log("built-in JIT is not set up; opening the walkthrough")
                 showSetup = true
                 return
@@ -241,6 +270,7 @@ final class JITCoordinator: ObservableObject {
                 attachGeneration += 1
                 log("TrollStore enabled JIT")
             } else {
+                preparationIntent.cancel()
                 status = nil
                 error = "TrollStore did not enable JIT. In TrollStore's Settings turn on URL Scheme, and make sure APK Container was "
                       + "installed through TrollStore (or is signed with get-task-allow)."
@@ -301,8 +331,10 @@ final class JITCoordinator: ObservableObject {
     }
 
     func enableBuiltIn() {
-        guard let pairing = builtInPairing() else { return }
+        preparationIntent.request()
+        guard let pairing = builtInPairing() else { preparationIntent.cancel(); return }
         guard let script = JITBootstrap.scriptBase64 else {
+            preparationIntent.cancel()
             error = "APK Container's JIT script is missing from this installation. Reinstall APK Container."
             return
         }
@@ -320,6 +352,7 @@ final class JITCoordinator: ObservableObject {
             readiness?.invalidate()
             busy = false
             if let failure {
+                preparationIntent.cancel()
                 status = nil
                 error = failure
                 log("built-in JIT failed: \(failure)")

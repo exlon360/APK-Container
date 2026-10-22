@@ -528,7 +528,7 @@ struct JITSettings: View {
                 if let why = JITBootstrap.lastFailure {
                     Text(why).font(.caption).foregroundStyle(.orange)
                 }
-                if !JITBootstrap.ready {
+                if !JITBootstrap.available {
                     Button {
                         jit.enable()
                     } label: {
@@ -536,7 +536,8 @@ struct JITSettings: View {
                     }
                     .disabled(jit.busy)
                     Button {
-                        _ = JITBootstrap.requestTrollStoreAttach()
+                        jit.method = .trollStore
+                        jit.enable()
                     } label: {
                         Label("Enable JIT with TrollStore", systemImage: "sparkles")
                     }
