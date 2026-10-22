@@ -40,6 +40,7 @@ const server = https.createServer({ key: fs.readFileSync(key), cert: fs.readFile
 server.on('tlsClientError', () => {});
 const control = http.createServer((request, response) => {
   if (request.url === '/hold-status') holdStatus = true;
+  if (request.url === '/hold-read') holdRead = true;
   if (request.url.startsWith('/release/')) {
     const name = request.url.slice('/release/'.length), held = pending.get(name);
     pending.delete(name);

@@ -13,6 +13,7 @@ final class BuildBridgeStore: ObservableObject {
     @Published private(set) var connected = false
     @Published private(set) var paired = false
     @Published private(set) var checkingConnection = false
+    @Published private(set) var checkingLocalNetworkAccess = false
     @Published private(set) var connectedAddress: String?
     @Published private(set) var connectionDiagnostics = "No connection test yet."
     @Published private(set) var busy = false
@@ -24,6 +25,7 @@ final class BuildBridgeStore: ObservableObject {
     private var connection: BuildBridgeConnection?
     private var refreshID: UUID?
     private var pollID: UUID?
+    private var localNetworkAccessID: UUID?
     private var profileGeneration = UUID()
     private var lastRefresh = Date.distantPast
     private static let service = "com.apkcontainer.build-bridge"
@@ -32,7 +34,7 @@ final class BuildBridgeStore: ObservableObject {
         .appendingPathComponent("apk-builder-projects.json")
 
     var selected: BuildProject? { projects.first { $0.id == selectedID } }
-    var canReconnect: Bool { profile != nil && !busy && downloading == nil && mutationCount == 0 && !reconnecting }
+    var canReconnect: Bool { profile != nil && !busy && downloading == nil && mutationCount == 0 && !reconnecting && !checkingLocalNetworkAccess }
     var connectionLabel: String {
         guard profile != nil else { return "Connect your Mac" }
         if !connected { return checkingConnection ? "Connecting…" : "Connection issue" }
@@ -99,6 +101,7 @@ final class BuildBridgeStore: ObservableObject {
         let previous = connection
         connection = nil; connected = false; paired = false; connectedAddress = nil
         checkingConnection = false; refreshID = nil; pollID = nil; lastRefresh = .distantPast
+        localNetworkAccessID = nil; checkingLocalNetworkAccess = false
         return previous
     }
     /// An explicit retry replaces a stalled URLSession and cancels old reads.
@@ -110,6 +113,48 @@ final class BuildBridgeStore: ObservableObject {
         let previous = invalidateConnection()
         if let previous { await previous.close() }
         await performRefresh()
+    }
+    /// A foreground, user-requested TCP attempt gives iOS time to show its
+    /// Local Network prompt. TCP readiness never authenticates the Mac.
+    func allowLocalNetwork() async {
+        guard canReconnect, let profile else { return }
+        let previous = invalidateConnection()
+        let generation = profileGeneration, id = UUID()
+        localNetworkAccessID = id; checkingLocalNetworkAccess = true
+        defer {
+            if localNetworkAccessID == id { localNetworkAccessID = nil; checkingLocalNetworkAccess = false }
+        }
+        if let previous { await previous.close() }
+        guard profileGeneration == generation else { return }
+        let usedTransport = transport(profile)
+        do {
+            try await usedTransport.testLocalNetworkAccess(timeout: 20)
+            try Task.checkCancellation()
+            guard profileGeneration == generation else { return }
+            await captureDiagnostics(usedTransport, generation: generation)
+            guard profileGeneration == generation else { return }
+            // Reuse this transport so the access probe remains in the report.
+            await performRefresh()
+        } catch {
+            if profileGeneration == generation { report(error) }
+        }
+        await captureDiagnostics(usedTransport, generation: generation)
+    }
+    func cancelLocalNetworkAccess() async {
+        guard checkingLocalNetworkAccess, !reconnecting else { return }
+        reconnecting = true
+        let previous = invalidateConnection(), generation = profileGeneration
+        // Keep reads and mutations out until the canceled transport has finished
+        // recording. Otherwise its report could replace a new refresh's evidence.
+        checkingLocalNetworkAccess = true
+        defer {
+            reconnecting = false
+            if profileGeneration == generation { checkingLocalNetworkAccess = false }
+        }
+        if let previous {
+            await previous.close()
+            await captureDiagnostics(previous, generation: generation)
+        }
     }
     func forgetMac() {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
@@ -133,6 +178,7 @@ final class BuildBridgeStore: ObservableObject {
         let bytes = try body.map { try JSONSerialization.data(withJSONObject: $0) }
         let usedTransport = transport(profile)
         let mutating = method != "GET"
+        guard !mutating || !checkingLocalNetworkAccess else { throw CancellationError() }
         if mutating { mutationCount += 1 }
         defer { if mutating { mutationCount -= 1 } }
         do {
@@ -167,7 +213,7 @@ final class BuildBridgeStore: ObservableObject {
     private struct Projects: Decodable { let projects: [BuildProject] }
     private struct Project: Decodable { let project: BuildProject }
     func refresh() async {
-        guard !reconnecting else { return }
+        guard !reconnecting, !checkingLocalNetworkAccess else { return }
         await performRefresh()
     }
     private func captureDiagnostics(_ transport: BuildBridgeConnection, generation: UUID) async {
@@ -208,7 +254,7 @@ final class BuildBridgeStore: ObservableObject {
         await captureDiagnostics(transport, generation: generation)
     }
     func poll() async {
-        guard !reconnecting, !busy, mutationCount == 0, refreshID == nil, pollID == nil else { return }
+        guard !reconnecting, !checkingLocalNetworkAccess, !busy, mutationCount == 0, refreshID == nil, pollID == nil else { return }
         if selected?.isActive != true || !connected {
             if Date().timeIntervalSince(lastRefresh) > 8 { await refresh() }
             return
@@ -234,20 +280,26 @@ final class BuildBridgeStore: ObservableObject {
         projects.removeAll { $0.id == project.id }; projects.append(project)
         projects.sort { $0.updatedAt > $1.updatedAt }; saveCache()
     }
-    func newChat() { guard !busy else { return }; selectedID = nil; draft = ""; error = nil; Router.shared.tab = .build }
+    func newChat() { guard !busy, !checkingLocalNetworkAccess else { return }; selectedID = nil; draft = ""; error = nil; Router.shared.tab = .build }
     func open(_ project: BuildProject) {
-        guard !busy else { return }
+        guard !busy, !checkingLocalNetworkAccess else { return }
+        let generation = profileGeneration
         selectedID = project.id; draft = ""; Router.shared.tab = .build
         Task {
-            do { upsert(try JSONDecoder().decode(Project.self, from: await request("/v1/projects/" + project.id)).project) }
+            do {
+                guard profileGeneration == generation else { return }
+                let latest = try JSONDecoder().decode(Project.self, from: await request("/v1/projects/" + project.id)).project
+                guard profileGeneration == generation else { return }
+                upsert(latest)
+            }
             catch is CancellationError { }
-            catch { report(error) }
+            catch { if profileGeneration == generation { report(error) } }
         }
     }
     func send() async {
         let submittedDraft = draft
         let text = submittedDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, text.count <= 20_000, !busy, selected?.isActive != true else { return }
+        guard !text.isEmpty, text.count <= 20_000, !busy, !checkingLocalNetworkAccess, selected?.isActive != true else { return }
         guard connected && paired else { error = "Connect your Mac and choose Pair Skill /apk in APK Container Bridge first."; return }
         busy = true; error = nil
         defer { busy = false }
@@ -265,11 +317,13 @@ final class BuildBridgeStore: ObservableObject {
         catch { report(error) }
     }
     func interrupt(_ project: BuildProject) async {
+        guard !checkingLocalNetworkAccess else { return }
         do { upsert(try JSONDecoder().decode(Project.self, from: await request("/v1/projects/" + project.id + "/interrupt", method: "POST", body: [:])).project) }
         catch is CancellationError { }
         catch { report(error) }
     }
     func approve(_ approval: BuildApproval, project: BuildProject, accept: Bool, answers: [String: [String]] = [:]) async {
+        guard !checkingLocalNetworkAccess else { return }
         do {
             upsert(try JSONDecoder().decode(Project.self, from: await request("/v1/projects/" + project.id + "/approvals/" + approval.id,
                 method: "POST", body: ["decision": accept ? "accept" : "decline", "answers": answers])).project)
@@ -277,7 +331,7 @@ final class BuildBridgeStore: ObservableObject {
         catch { report(error) }
     }
     func install(_ artifact: BuildArtifact, project: BuildProject) async {
-        guard let profile, downloading == nil else { return }
+        guard let profile, downloading == nil, !checkingLocalNetworkAccess else { return }
         let generation = profileGeneration
         let usedTransport = transport(profile)
         downloading = artifact.id; error = nil

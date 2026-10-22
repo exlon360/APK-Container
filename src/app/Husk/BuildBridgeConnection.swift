@@ -2,6 +2,7 @@
 import Foundation
 import Security
 import CryptoKit
+import Network
 
 /// Every candidate address must present the pairing file's exact certificate
 /// before URLSession can send its credential. Redirects never carry credentials.
@@ -59,9 +60,10 @@ private final class BuildConnectionDiagnostics: @unchecked Sendable {
     }
     private let lock = NSLock()
     private var entries: [Entry] = []
-    func record(origin: String, phase: String, started: Date, error: Error? = nil, status: Int? = nil) {
+    func record(origin: String, phase: String, started: Date, error: Error? = nil, status: Int? = nil, evidence: String? = nil) {
         let result: String
-        if let error { result = Self.safeResult(error) }
+        if let evidence { result = evidence }
+        else if let error { result = Self.safeResult(error) }
         else { result = status.map { "HTTP \($0)" } ?? "success" }
         let entry = Entry(date: Date(), origin: origin, phase: phase,
             milliseconds: max(0, Int(Date().timeIntervalSince(started) * 1000)), result: result)
@@ -114,6 +116,121 @@ private final class BuildConnectionDiagnostics: @unchecked Sendable {
     }
 }
 
+/// Endpoint-specific evidence only. A generic path failure is not proof that
+/// Local Network permission was denied, and TCP readiness is not HTTPS trust.
+struct BuildLocalNetworkState {
+    enum Outcome: Sendable, Equatable { case ready, denied, failed, timedOut }
+    private(set) var localNetworkDenied = false
+    mutating func observe(_ state: NWConnection.State, reason: NWPath.UnsatisfiedReason?) -> Outcome? {
+        switch state {
+        case .ready: localNetworkDenied = false; return .ready
+        case .waiting: localNetworkDenied = reason == .localNetworkDenied; return nil
+        case .failed: localNetworkDenied = false; return .failed
+        default: localNetworkDenied = false; return nil
+        }
+    }
+    var deadlineOutcome: Outcome { localNetworkDenied ? .denied : .timedOut }
+}
+
+/// This explicit user-triggered probe never writes to its socket. All state and
+/// continuation ownership live on one queue, including cancellation before start.
+private final class BuildLocalNetworkProbe: @unchecked Sendable {
+    private let connection: NWConnection
+    private let origin: String
+    private let diagnostics: BuildConnectionDiagnostics
+    private let queue = DispatchQueue(label: "apk-container.local-network-test")
+    private var continuation: CheckedContinuation<BuildLocalNetworkState.Outcome, Error>?
+    private var deadline: DispatchWorkItem?
+    private var finished = false
+    private var state = BuildLocalNetworkState()
+    private let started = Date()
+
+    init(origin: String, diagnostics: BuildConnectionDiagnostics) {
+        self.origin = origin; self.diagnostics = diagnostics
+        let url = URLComponents(string: origin)!
+        let host = url.host!.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        connection = NWConnection(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: UInt16(url.port ?? 443))!, using: .tcp)
+    }
+    func run(timeout: TimeInterval) async throws -> BuildLocalNetworkState.Outcome {
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                queue.async { [self] in
+                    guard !self.finished else { continuation.resume(throwing: CancellationError()); return }
+                    self.continuation = continuation
+                    self.connection.stateUpdateHandler = { [weak self] state in self?.changed(state) }
+                    let deadline = DispatchWorkItem { [weak self] in
+                        guard let self, !self.finished else { return }
+                        // Re-read current per-endpoint state at the deadline:
+                        // an earlier denied path may have changed after the alert.
+                        if let outcome = self.state.observe(self.connection.state, reason: self.connection.currentPath?.unsatisfiedReason) {
+                            self.record(outcome == .ready ? "tcp_ready_unverified" : "tcp_failed")
+                            self.finish(.success(outcome)); return
+                        }
+                        let outcome = self.state.deadlineOutcome
+                        self.record(outcome == .denied ? "local_network_denied" : "tcp_no_response_before_deadline")
+                        self.finish(.success(outcome))
+                    }
+                    self.deadline = deadline
+                    self.queue.asyncAfter(deadline: .now() + max(0.01, timeout), execute: deadline)
+                    self.connection.start(queue: self.queue)
+                }
+            }
+        } onCancel: {
+            self.queue.async {
+                guard !self.finished else { return }
+                self.record("tcp_cancelled")
+                self.finish(.failure(CancellationError()))
+            }
+        }
+    }
+    private func changed(_ newState: NWConnection.State) {
+        guard !finished else { return }
+        let reason = connection.currentPath?.unsatisfiedReason
+        let outcome = state.observe(newState, reason: reason)
+        switch newState {
+        case .ready: record("tcp_ready_unverified")
+        case .waiting(let error): record("tcp_waiting", error: error)
+        case .failed(let error): record("tcp_failed", error: error)
+        case .preparing: record("tcp_preparing")
+        case .cancelled: finish(.failure(CancellationError())); return
+        default: break
+        }
+        // A denied path can recover when the user answers the system alert.
+        // Keep it alive until ready, failure, cancellation, or the user-test deadline.
+        if let outcome { finish(.success(outcome)) }
+    }
+    private func record(_ event: String, error: NWError? = nil) {
+        var evidence = event
+        if let path = connection.currentPath {
+            let status: String
+            switch path.status {
+            case .satisfied: status = "satisfied"
+            case .unsatisfied: status = "unsatisfied"
+            case .requiresConnection: status = "requires_connection"
+            @unknown default: status = "unknown"
+            }
+            evidence += " path=" + status
+            if state.localNetworkDenied { evidence += " reason=local_network_denied" }
+        }
+        if let error {
+            switch error {
+            case .posix(let code): evidence += " NSPOSIXErrorDomain=\(code.rawValue)"
+            case .dns(let code): evidence += " DNSServiceError=\(code)"
+            case .tls(let code): evidence += " NSOSStatusErrorDomain=\(code)"
+            default: evidence += " network_error"
+            }
+        }
+        diagnostics.record(origin: origin, phase: "local network test (TCP only)", started: started, evidence: evidence)
+    }
+    private func finish(_ result: Result<BuildLocalNetworkState.Outcome, Error>) {
+        guard !finished else { return }
+        finished = true; deadline?.cancel(); deadline = nil
+        connection.stateUpdateHandler = nil; connection.cancel()
+        let continuation = self.continuation; self.continuation = nil
+        continuation?.resume(with: result)
+    }
+}
+
 /// Pins a short list of explicit addresses, remembers the working route, and
 /// retries reads only. A timed-out mutation may already have reached the Mac.
 actor BuildBridgeConnection {
@@ -131,11 +248,13 @@ actor BuildBridgeConnection {
     }
     private struct Route: @unchecked Sendable { let session: URLSession; let trust: BuildBridgeTLS }
     private struct Probe { let id: UUID; let task: Task<Reachable, Error> }
+    private struct AccessTest { let id: UUID; let task: Task<Void, Error> }
     private let profile: AgentProfile
     private let routes: [String: Route]
     private let probeSeconds: Double
     private var selectedOrigin: String?
     private var connectionTask: Probe?
+    private var accessTest: AccessTest?
     private var latestProbeID: UUID?
     private var closed = false
     private let diagnostics = BuildConnectionDiagnostics()
@@ -153,12 +272,54 @@ actor BuildBridgeConnection {
             return (origin, Route(session: URLSession(configuration: configuration, delegate: trust, delegateQueue: nil), trust: trust))
         })
     }
-    func close() {
+    func close() async {
         closed = true; connectionTask?.task.cancel(); connectionTask = nil; selectedOrigin = nil
+        let accessTask = accessTest?.task
+        accessTask?.cancel(); accessTest = nil
         for route in routes.values { route.session.invalidateAndCancel() }
+        // Cancelled sockets finish recording before the store copies the report.
+        _ = await accessTask?.result
     }
     func activeAddress() -> String? { selectedOrigin }
     func diagnosticReport() -> String { diagnostics.report() }
+
+    /// Call only from an explicit user action. It allows time for the system
+    /// permission alert; the caller must still perform the normal pinned HTTPS check.
+    func testLocalNetworkAccess(timeout: TimeInterval = 20) async throws {
+        try Task.checkCancellation()
+        guard !closed else { throw CancellationError() }
+        accessTest?.task.cancel()
+        let origins = profile.origins, diagnostics = self.diagnostics
+        let task = Task<Void, Error> {
+            let outcomes = try await withThrowingTaskGroup(of: BuildLocalNetworkState.Outcome.self) { group in
+                for origin in origins {
+                    group.addTask { try await BuildLocalNetworkProbe(origin: origin, diagnostics: diagnostics).run(timeout: timeout) }
+                }
+                var outcomes: [BuildLocalNetworkState.Outcome] = []
+                while let outcome = try await group.next() {
+                    if outcome == .ready { group.cancelAll(); return [outcome] }
+                    outcomes.append(outcome)
+                }
+                return outcomes
+            }
+            try Task.checkCancellation()
+            if outcomes.contains(.ready) { return }
+            if outcomes.contains(.denied) {
+                throw BuildConnectionFailure.unreachable("Local Network access to the Mac is blocked or still awaiting permission. Allow access for APK Container—or LiveContainer if it hosts this app. If LiveContainer is missing from Settings, launch through its main app and try Allow Local Network again. Keep StikDebug/JIT enabled.")
+            }
+            if outcomes.contains(.timedOut) {
+                throw BuildConnectionFailure.unreachable("The device could not open a TCP connection to the Mac before the test ended. This does not prove a permission or VPN problem. Check the Mac address and Wi-Fi, and copy Connection Details. Keep StikDebug/JIT enabled.")
+            }
+            throw BuildConnectionFailure.unreachable("The device could not open a TCP connection to the Mac. Copy Connection Details for the network error code. Keep StikDebug/JIT enabled.")
+        }
+        let test = AccessTest(id: UUID(), task: task); accessTest = test
+        defer { if accessTest?.id == test.id { accessTest = nil } }
+        try await withTaskCancellationHandler {
+            try await task.value
+            try Task.checkCancellation()
+            guard !closed else { throw CancellationError() }
+        } onCancel: { task.cancel() }
+    }
 
     func connect() async throws -> Status {
         guard !closed else { throw CancellationError() }

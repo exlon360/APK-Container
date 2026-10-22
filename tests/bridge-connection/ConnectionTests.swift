@@ -1,4 +1,5 @@
 import Foundation
+import Network
 
 @main struct ConnectionTests {
     struct Fixture: Decodable { let addresses: [String: String]; let token: String; let pin: String }
@@ -108,5 +109,90 @@ import Foundation
         precondition(recoveredAddress == fixture.addresses["backup"], "Read did not recover after route loss")
         await reroute.close(); await connection.close()
         print("PASS idempotent GET reconnects after selected route fails")
+
+        // Permission classification is based only on per-endpoint Network.framework
+        // evidence. These tests do not change the host's real privacy settings.
+        var evidence = BuildLocalNetworkState()
+        precondition(evidence.observe(.preparing, reason: .localNetworkDenied) == nil)
+        precondition(evidence.deadlineOutcome == .timedOut, "A non-waiting path was mislabeled as permission denial")
+        precondition(evidence.observe(.waiting(.posix(.ENETDOWN)), reason: .localNetworkDenied) == nil)
+        precondition(evidence.deadlineOutcome == .denied)
+        precondition(evidence.observe(.ready, reason: nil) == .ready && !evidence.localNetworkDenied, "Allowing permission could not recover the same probe")
+        _ = evidence.observe(.waiting(.posix(.ENETUNREACH)), reason: .notAvailable)
+        precondition(evidence.deadlineOutcome == .timedOut, "A generic path failure was mislabeled as permission denial")
+        _ = evidence.observe(.waiting(.posix(.ENETDOWN)), reason: .localNetworkDenied)
+        _ = evidence.observe(.waiting(.posix(.ECONNREFUSED)), reason: nil)
+        precondition(evidence.deadlineOutcome == .timedOut, "Stale permission evidence survived a new path state")
+        _ = evidence.observe(.waiting(.posix(.ENETDOWN)), reason: .localNetworkDenied)
+        _ = evidence.observe(.preparing, reason: .localNetworkDenied)
+        precondition(evidence.deadlineOutcome == .timedOut, "Stale permission evidence survived a renewed connection attempt")
+        print("PASS only endpoint waiting/localNetworkDenied proves denial; permission can recover")
+
+        let tcp = BuildBridgeConnection(profile: try profile(["tcpOnly"]), probeSeconds: 0.2)
+        try await tcp.testLocalNetworkAccess(timeout: 1)
+        let tcpAddress = await tcp.activeAddress()
+        precondition(tcpAddress == nil, "TCP readiness selected an authenticated route")
+        let tcpDetails = await tcp.diagnosticReport()
+        precondition(tcpDetails.contains("tcp_ready_unverified") && tcpDetails.contains("TCP only"))
+        let reader = BuildBridgeConnection(profile: try profile(["backup"]), probeSeconds: 1)
+        let rawTCPData = try await reader.request("/v1/tcp-counts")
+        let rawTCPCounts = try JSONSerialization.jsonObject(with: rawTCPData) as! [String: Int]
+        precondition(rawTCPCounts["connections"] == 1 && rawTCPCounts["bytes"] == 0, "A TCP permission test sent application data")
+        precondition(rawTCPCounts["closed"] == 1, "A completed TCP permission test left its socket open")
+        do { _ = try await tcp.connect(); preconditionFailure("TCP readiness bypassed HTTPS") }
+        catch let failure as BuildConnectionFailure { precondition(failure.isTransportFailure) }
+        await tcp.close(); await reader.close()
+        print("PASS real loopback TCP probe sends zero bytes, closes, and cannot bypass HTTPS")
+
+        let tcpAlternate = BuildBridgeConnection(profile: try profile(["closedPort", "tcpOnly"]), probeSeconds: 1)
+        let alternateStart = Date()
+        try await tcpAlternate.testLocalNetworkAccess(timeout: 20)
+        precondition(Date().timeIntervalSince(alternateStart) < 1, "A waiting TCP origin blocked a reachable alternate")
+        let alternateAddress = await tcpAlternate.activeAddress()
+        precondition(alternateAddress == nil)
+        let alternateDetails = await tcpAlternate.diagnosticReport()
+        precondition(alternateDetails.contains("tcp_ready_unverified") && alternateDetails.contains("tcp_cancelled"))
+        await tcpAlternate.close()
+        print("PASS TCP alternate readiness cancels waiting origins without selecting an authenticated route")
+
+        let tcpPin = BuildBridgeConnection(profile: try profile(["wrongPin"]), probeSeconds: 1)
+        try await tcpPin.testLocalNetworkAccess(timeout: 1)
+        do { _ = try await tcpPin.connect(); preconditionFailure("TCP readiness bypassed the certificate pin") }
+        catch let failure as BuildConnectionFailure { precondition(failure.localizedDescription.contains("identity")) }
+        let tcpPinDetails = await tcpPin.diagnosticReport()
+        precondition(tcpPinDetails.contains("tcp_ready_unverified") && tcpPinDetails.contains("secure_identity_rejected"))
+        for privateValue in [fixture.token, fixture.pin, "/v1/"] { precondition(!tcpPinDetails.contains(privateValue)) }
+        await tcpPin.close()
+        print("PASS raw TCP readiness still requires the exact pinned HTTPS identity")
+
+        let bounded = BuildBridgeConnection(profile: try profile(["closedPort"]), probeSeconds: 1)
+        let boundedStart = Date()
+        do { try await bounded.testLocalNetworkAccess(timeout: 0.15); preconditionFailure("Closed TCP port succeeded") }
+        catch let failure as BuildConnectionFailure {
+            precondition(failure.isTransportFailure && !failure.localizedDescription.contains("iOS denied"))
+            precondition(Date().timeIntervalSince(boundedStart) < 1)
+        }
+        let boundedDetails = await bounded.diagnosticReport()
+        precondition(boundedDetails.contains("NSPOSIXErrorDomain=") && !boundedDetails.contains("reason=local_network_denied"))
+        await bounded.close()
+        print("PASS closed loopback port is bounded and is not falsely called permission denial")
+
+        for cancelWithClose in [false, true] {
+            let cancellable = BuildBridgeConnection(profile: try profile(["closedPort"]), probeSeconds: 1)
+            let pending = Task { try await cancellable.testLocalNetworkAccess(timeout: 20) }
+            for _ in 0..<100 {
+                if await cancellable.diagnosticReport().contains("tcp_waiting") { break }
+                try await Task.sleep(nanoseconds: 5_000_000)
+            }
+            let cancelStart = Date()
+            if cancelWithClose { await cancellable.close() } else { pending.cancel() }
+            do { try await pending.value; preconditionFailure("Cancelled network test succeeded") }
+            catch { precondition(BuildBridgeConnection.isCancellation(error)) }
+            precondition(Date().timeIntervalSince(cancelStart) < 0.5, "Cancellation waited for the permission deadline")
+            let cancelledDetails = await cancellable.diagnosticReport()
+            precondition(cancelledDetails.contains("tcp_cancelled"), "Cancellation evidence was unavailable after completion")
+            await cancellable.close()
+        }
+        print("PASS caller cancellation and transport close cancel live TCP probes and preserve evidence")
     }
 }

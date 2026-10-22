@@ -39,6 +39,9 @@ struct BuildScreen: View {
                         Button { router.tab = .myApps } label: { Label("My Apps", systemImage: "square.stack.3d.up") }
                         Button { Task { await bridge.reconnect() } } label: { Label("Reconnect to Mac", systemImage: "arrow.clockwise") }
                             .disabled(!bridge.canReconnect)
+                        Button { Task { await bridge.allowLocalNetwork() } } label: {
+                            Label("Allow Local Network", systemImage: "network")
+                        }.disabled(!bridge.canReconnect)
                         Button { BuildConnectionReport.copy(bridge.connectionDiagnostics) } label: {
                             Label("Copy Connection Details", systemImage: "doc.on.doc")
                         }.disabled(bridge.profile == nil)
@@ -76,9 +79,11 @@ struct BuildScreen: View {
                             if let error = bridge.error {
                                 BuildErrorCard(text: error)
                                 if bridge.profile != nil {
+                                    if !bridge.checkingLocalNetworkAccess { localNetworkAction }
                                     Button("Connection Details") { showSetup = true }.buttonStyle(.bordered)
                                 }
                             }
+                            if bridge.checkingLocalNetworkAccess { localNetworkAction }
                             Color.clear.frame(height: 1).id("bottom")
                         }.padding(.horizontal, 18).padding(.bottom, 16)
                     }
@@ -107,6 +112,19 @@ struct BuildScreen: View {
                     if phase == .active && router.tab == .build { await bridge.poll() }
                 }
             }
+        }
+    }
+    @ViewBuilder private var localNetworkAction: some View {
+        if bridge.checkingLocalNetworkAccess {
+            HStack {
+                ProgressView()
+                Text("Waiting for local network access…").font(.callout)
+                Spacer()
+                Button("Cancel") { Task { await bridge.cancelLocalNetworkAccess() } }.buttonStyle(.bordered)
+            }
+        } else {
+            Button("Allow Local Network") { Task { await bridge.allowLocalNetwork() } }
+                .buttonStyle(.borderedProminent).disabled(!bridge.canReconnect)
         }
     }
     private var setupCard: some View {
@@ -326,6 +344,7 @@ private struct BuildApprovalCard: View {
 private struct BridgeSetupSheet: View {
     @ObservedObject private var bridge = BuildBridgeStore.shared
     @State private var macAddress = ""
+    @State private var settingsUnavailable = false
     @Environment(\.dismiss) private var dismiss
     @Binding var showImporter: Bool
     var body: some View {
@@ -361,12 +380,41 @@ private struct BridgeSetupSheet: View {
             }
             Text("Keep the Mac bridge running and both devices on the same Wi-Fi or a reachable VPN. Leave any VPN required by StikDebug or JIT enabled. In Settings, allow Local Network for APK Container—or LiveContainer when it hosts this app.")
                 .font(.callout).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 10) {
+                if bridge.checkingLocalNetworkAccess {
+                    HStack {
+                        ProgressView()
+                        Text("Waiting for local network access…").font(.callout)
+                        Spacer()
+                        Button("Cancel") { Task { await bridge.cancelLocalNetworkAccess() } }.buttonStyle(.bordered)
+                    }
+                } else {
+                    Button("Allow Local Network") { Task { await bridge.allowLocalNetwork() } }
+                        .buttonStyle(.borderedProminent).disabled(!bridge.canReconnect)
+                }
+                Text("Tap Allow if a system prompt appears. This check waits up to 20 seconds, then reconnects to your Mac when access is available.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text("If access is blocked, open Settings → Privacy & Security → Local Network and allow the LiveContainer copy hosting this app, or APK Container if installed directly.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if getenv("LP_HOME_PATH") != nil {
+                    Text("This app is in a LiveContainer multitask window. If no permission prompt appears, save your work and open APK Container in LiveContainer’s main window, then try again.")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+            }
             HStack {
                 Button(bridge.checkingConnection ? "Restart Connection" : "Reconnect") { Task { await bridge.reconnect() } }
                     .buttonStyle(.borderedProminent).disabled(!bridge.canReconnect)
                 Button("Open Settings") {
-                    if let settings = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(settings) }
+                    if let settings = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(settings, options: [:]) { opened in
+                            DispatchQueue.main.async { settingsUnavailable = !opened }
+                        }
+                    } else { settingsUnavailable = true }
                 }.buttonStyle(.bordered)
+            }
+            if settingsUnavailable {
+                Text("Open the Settings app manually, then Privacy & Security → Local Network. Choose the app that hosts APK Container.")
+                    .font(.caption).foregroundStyle(.orange)
             }
             Divider()
             Text("Mac address").font(.subheadline.bold())
@@ -376,7 +424,7 @@ private struct BridgeSetupSheet: View {
             Text("Copy the address shown in the Mac bridge if your network changed. Your saved pairing and certificate stay the same.")
                 .font(.caption).foregroundStyle(.secondary)
             Button("Use This Address") { Task { await bridge.updateAddress(macAddress) } }
-                .buttonStyle(.bordered).disabled(macAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !bridge.canReconnect)
+                .buttonStyle(.bordered).disabled(macAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || bridge.checkingConnection || bridge.busy || bridge.checkingLocalNetworkAccess)
             if let error = bridge.error { Text(error).font(.callout).foregroundStyle(.orange) }
             DisclosureGroup("Connection Details") {
                 VStack(alignment: .leading, spacing: 12) {
@@ -406,9 +454,10 @@ private enum BuildConnectionReport {
         let build = info["CFBundleVersion"] as? String ?? "unknown"
         let commit = info["HuskBuildCommit"] as? String ?? "unknown"
         let host = getenv("LC_HOME_PATH") != nil ? "detected" : "not detected"
+        let liveProcess = getenv("LP_HOME_PATH") != nil ? "detected" : "not detected"
         return "APK Container \(version) (\(build)), commit \(commit)\n"
             + "System: \(ProcessInfo.processInfo.operatingSystemVersionString)\n"
-            + "LiveContainer: \(host)\n\n" + details
+            + "LiveContainer: \(host)\nLiveContainer multitask process: \(liveProcess)\n\n" + details
     }
     static func copy(_ details: String) { UIPasteboard.general.string = text(details) }
 }

@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import https from 'node:https';
+import net from 'node:net';
 import { execFileSync } from 'node:child_process';
 import { X509Certificate } from 'node:crypto';
 const directory = process.argv[2];
@@ -17,6 +18,7 @@ const otherIdentity = credential('other');
 const token = 'test-fixture-token-never-a-user-credential';
 const pin = new X509Certificate(identity.cert).fingerprint256.replaceAll(':', '').toLowerCase();
 const counts = {};
+const tcpCounts = { connections: 0, bytes: 0, closed: 0 };
 let failPrimary = false;
 const servers = [];
 let redirectAddress;
@@ -42,6 +44,7 @@ async function start(kind, credentials = identity) {
     if (req.url === '/v1/drop-read' && kind === 'good') { failPrimary = true; req.socket.destroy(); return; }
     if (req.url === '/v1/artifact') { res.writeHead(200, { 'Content-Type': 'application/vnd.android.package-archive' }); return res.end('APK fixture bytes'); }
     if (req.url === '/v1/counts') return json(200, counts);
+    if (req.url === '/v1/tcp-counts') return json(200, tcpCounts);
     return json(200, { ok: true });
   });
   server.on('tlsClientError', () => {});
@@ -52,6 +55,19 @@ async function start(kind, credentials = identity) {
 const addresses = {};
 for (const kind of ['good', 'backup', 'slow', 'unauthorized', 'invalid', 'wrongID', 'redirectTarget']) addresses[kind] = await start(kind);
 addresses.wrongPin = await start('wrongPin', otherIdentity);
+const tcpOnly = net.createServer(socket => {
+  tcpCounts.connections++;
+  socket.on('data', data => { tcpCounts.bytes += data.length; });
+  socket.on('close', () => { tcpCounts.closed++; });
+  socket.on('error', () => {});
+});
+await new Promise(resolve => tcpOnly.listen(0, '127.0.0.1', resolve));
+servers.push(tcpOnly);
+addresses.tcpOnly = 'https://127.0.0.1:' + tcpOnly.address().port;
+const closedPort = net.createServer();
+await new Promise(resolve => closedPort.listen(0, '127.0.0.1', resolve));
+addresses.closedPort = 'https://127.0.0.1:' + closedPort.address().port;
+await new Promise(resolve => closedPort.close(resolve));
 redirectAddress = addresses.redirectTarget;
 fs.writeFileSync(path.join(directory, 'fixture.json'), JSON.stringify({ addresses, token, pin }));
-process.on('SIGTERM', () => { for (const server of servers) { server.closeAllConnections(); server.close(); } process.exit(); });
+process.on('SIGTERM', () => { for (const server of servers) { server.closeAllConnections?.(); server.close(); } process.exit(); });

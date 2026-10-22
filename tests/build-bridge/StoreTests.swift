@@ -69,12 +69,16 @@ import Foundation
         try await waitFor("approval")
         precondition(!store.canReconnect)
         await store.reconnect()
+        await store.allowLocalNetwork()
+        precondition(!store.checkingLocalNetworkAccess)
         try await assertStatusCount(4, "Reconnect interrupted an approval")
         _ = try await control("/release/approval"); await approve.value
         precondition(store.canReconnect)
         let interrupt = Task { await store.interrupt(project) }
         try await waitFor("interrupt")
         precondition(!store.canReconnect); await store.reconnect()
+        await store.allowLocalNetwork()
+        precondition(!store.checkingLocalNetworkAccess)
         try await assertStatusCount(4, "Reconnect interrupted a mutation")
         _ = try await control("/release/interrupt"); await interrupt.value
         precondition(store.canReconnect)
@@ -83,6 +87,8 @@ import Foundation
         let send = Task { await store.send() }
         try await waitFor("send")
         precondition(store.busy && !store.canReconnect); await store.reconnect()
+        await store.allowLocalNetwork()
+        precondition(!store.checkingLocalNetworkAccess)
         try await assertStatusCount(4)
         _ = try await control("/release/send"); await send.value
         precondition(!store.busy && store.canReconnect)
@@ -97,10 +103,74 @@ import Foundation
         let download = Task { await store.install(artifact, project: project) }
         try await waitFor("download")
         precondition(store.downloading != nil && !store.canReconnect); await store.reconnect()
+        await store.allowLocalNetwork()
+        precondition(!store.checkingLocalNetworkAccess)
         try await assertStatusCount(4)
         download.cancel(); await download.value
         precondition(store.downloading == nil && store.canReconnect)
         _ = try await control("/release/download")
         print("PASS reconnect leaves a pending APK download alone")
+
+        store.draft = "Keep this prompt while enabling access"
+        _ = try await control("/hold-status")
+        let access = Task { await store.allowLocalNetwork() }
+        try await waitFor("status")
+        precondition(store.checkingLocalNetworkAccess && !store.canReconnect)
+        precondition(!store.connected && !store.paired, "TCP readiness must not authenticate the bridge")
+        let beforeAccessOperations = try await control().counts
+        await store.refresh(); await store.poll(); await store.reconnect(); await store.allowLocalNetwork()
+        await store.send(); await store.approve(approval, project: project, accept: true)
+        await store.interrupt(project); await store.install(artifact, project: project)
+        store.newChat(); store.open(project)
+        let afterAccessOperations = try await control().counts
+        precondition(beforeAccessOperations == afterAccessOperations, "Access test allowed overlapping operations")
+        precondition(!store.busy && store.downloading == nil && store.selectedID == "project-fixture")
+        precondition(store.draft == "Keep this prompt while enabling access")
+        _ = try await control("/release/status"); await access.value
+        precondition(store.connected && store.paired && !store.checkingLocalNetworkAccess && store.canReconnect)
+        precondition(store.profile == fixture.profile && store.connectionDiagnostics.contains("tcp_ready_unverified"))
+        try await assertStatusCount(5)
+        print("PASS local access requires pinned HTTPS after TCP, retains probe diagnostics, and blocks overlapping operations")
+
+        _ = try await control("/hold-status")
+        let cancelledAccess = Task { await store.allowLocalNetwork() }
+        try await waitFor("status")
+        await store.cancelLocalNetworkAccess(); await cancelledAccess.value
+        precondition(!store.checkingLocalNetworkAccess && !store.checkingConnection && !store.connected && store.canReconnect)
+        precondition(store.profile == fixture.profile && store.selectedID == "project-fixture")
+        precondition(store.draft == "Keep this prompt while enabling access" && store.selected?.status == "completed")
+        precondition(store.connectionDiagnostics.contains("tcp_ready_unverified"))
+        let cancelledReport = store.connectionDiagnostics
+        _ = try await control("/release/status")
+        precondition(store.connectionDiagnostics == cancelledReport)
+        await store.reconnect()
+        precondition(store.connected && store.paired)
+        try await assertStatusCount(7)
+        print("PASS explicit local-access cancellation preserves pairing/app/draft/evidence and permits a fresh retry")
+
+        _ = try await control("/hold-read")
+        store.open(project)
+        try await waitFor("read")
+        store.draft = "Preserve draft when replacing open read"
+        await store.allowLocalNetwork()
+        let freshReport = store.connectionDiagnostics
+        _ = try await control("/release/read")
+        try await Task.sleep(nanoseconds: 20_000_000)
+        precondition(store.connected && store.selected?.status == "completed" && store.error == nil)
+        precondition(store.draft == "Preserve draft when replacing open read" && store.connectionDiagnostics == freshReport)
+        try await assertStatusCount(8)
+        print("PASS local access cancels an old app-open read without applying its stale reply")
+
+        let wrongPin = AgentProfile(format: fixture.profile.format, version: fixture.profile.version,
+            bridgeID: fixture.profile.bridgeID, name: fixture.profile.name, url: fixture.profile.url,
+            token: fixture.profile.token, certificateSHA256: String(repeating: "0", count: 64),
+            createdAt: fixture.profile.createdAt, alternateURLs: fixture.profile.alternateURLs)
+        let unauthenticated = BuildBridgeStore(testProfile: wrongPin,
+            cacheURL: file.deletingLastPathComponent().appendingPathComponent("wrong-pin/projects.json"))
+        await unauthenticated.allowLocalNetwork()
+        precondition(!unauthenticated.connected && !unauthenticated.paired && !unauthenticated.checkingLocalNetworkAccess)
+        precondition(unauthenticated.error != nil && unauthenticated.connectionDiagnostics.contains("tcp_ready_unverified"))
+        precondition(unauthenticated.profile == wrongPin && unauthenticated.canReconnect)
+        print("PASS successful local TCP access cannot bypass the saved TLS certificate pin")
     }
 }
